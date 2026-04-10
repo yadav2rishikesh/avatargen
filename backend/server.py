@@ -175,6 +175,10 @@ class ChatResponse(BaseModel):
 class UpdateCreditsRequest(BaseModel):
     credits: int
 
+class HeyGenTTSRequest(BaseModel):
+    voice_id: str
+    script: str
+
 class ElevenLabsVoicesRequest(BaseModel):
     elevenlabs_api_key: str
 
@@ -804,6 +808,41 @@ async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
             return {"voices": voices, "count": len(voices)}
     except Exception as e:
         logging.error(f"HeyGen voices error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/heygen/tts-preview")
+async def heygen_tts_preview(
+    data: HeyGenTTSRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.heygen.com/v1/audio/text_to_speech",
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": data.script[:500],
+                    "voice_id": data.voice_id
+                }
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            # Response can be audio_url or base64
+            audio_url = (result.get("data", {}).get("audio_url") or
+                        result.get("audio_url") or
+                        result.get("data", {}).get("url"))
+            audio_b64 = (result.get("data", {}).get("audio") or
+                        result.get("audio"))
+            return {
+                "audio_url": audio_url,
+                "audio_base64": audio_b64
+            }
+    except Exception as e:
+        logging.error(f"HeyGen TTS preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
