@@ -452,6 +452,18 @@ export default function CreatePage() {
                     rows={10}
                     className="resize-none font-mono text-sm"
                   />
+                  {(() => {
+                    const charLimits = { '10': 150, '20': 270, '30': 400, '60': 800, '90': 1200 };
+                    const limit = charLimits[duration] || 400;
+                    const count = script.length;
+                    const isOver = count > limit;
+                    return (
+                      <p className={`text-xs ${isOver ? 'text-red-500 font-medium' : 'text-slate-500'}`}>
+                        {count} / {limit} characters (approx {duration} seconds)
+                        {isOver && ' — Script too long!'}
+                      </p>
+                    );
+                  })()}
                 </div>
               </CardContent>
             </Card>
