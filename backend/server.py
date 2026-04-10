@@ -787,6 +787,7 @@ async def _elevenlabs_to_heygen_asset(
         if el_resp.status_code == 401:
             raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
         el_resp.raise_for_status()
+        logging.info(f"EL TTS status: {el_resp.status_code}, bytes: {len(el_resp.content)}")
 
         # 2. Upload MP3 to HeyGen
         hg_resp = await client.post(
@@ -794,6 +795,8 @@ async def _elevenlabs_to_heygen_asset(
             headers={"X-Api-Key": HEYGEN_API_KEY},
             files={"file": ("audio.mp3", io.BytesIO(el_resp.content), "audio/mpeg")}
         )
+        logging.info(f"HeyGen asset upload status: {hg_resp.status_code}")
+        logging.info(f"HeyGen asset response: {hg_resp.text}")
         hg_resp.raise_for_status()
         asset_id = hg_resp.json().get("data", {}).get("asset_id")
         if not asset_id:
@@ -1099,6 +1102,7 @@ async def generate_video_advanced(
                     stability=data.el_heygen_stability,
                     similarity_boost=0.75
                 )
+                logging.info(f"Asset ID received: {asset_id}")
                 voice_block = {
                     "type": "audio",
                     "audio_asset_id": asset_id
@@ -1162,6 +1166,8 @@ async def generate_video_advanced(
                 },
                 json=payload
             )
+            logging.info(f"HeyGen video generate status: {hg.status_code}")
+            logging.info(f"HeyGen video response: {hg.text}")
             hg.raise_for_status()
             heygen_video_id = hg.json().get("data", {}).get("video_id")
 
