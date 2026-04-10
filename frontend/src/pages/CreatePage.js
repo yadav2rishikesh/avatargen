@@ -41,6 +41,7 @@ export default function CreatePage() {
   // HeyGen voices
   const [heygenVoices, setHeygenVoices] = useState([]);
   const [heygenGenderFilter, setHeygenGenderFilter] = useState('all');
+  const [heygenSearchTerm, setHeygenSearchTerm] = useState('');
   const [selectedHGVoice, setSelectedHGVoice] = useState(null);
   const [loadingHGVoices, setLoadingHGVoices] = useState(false);
   const [isELInHG, setIsELInHG] = useState(false);
@@ -632,12 +633,27 @@ export default function CreatePage() {
                           </div>
                         </div>
 
+                        {/* Search input */}
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Search by Name</Label>
+                          <Input
+                            type="text"
+                            placeholder="Type to search voices..."
+                            value={heygenSearchTerm}
+                            onChange={(e) => {
+                              setHeygenSearchTerm(e.target.value);
+                              setSelectedHGVoice(null);
+                            }}
+                            className="h-9 text-sm"
+                          />
+                        </div>
+
                         <Select
                           value={selectedHGVoice?.voice_id || ''}
                           onValueChange={(id) => {
-                            const filteredHGVoices = heygenGenderFilter === 'all'
-                              ? heygenVoices
-                              : heygenVoices.filter(v => v.gender === heygenGenderFilter);
+                            const filteredHGVoices = heygenVoices
+                              .filter(v => heygenGenderFilter === 'all' || v.gender === heygenGenderFilter)
+                              .filter(v => v.name.toLowerCase().includes(heygenSearchTerm.toLowerCase()));
                             setSelectedHGVoice(filteredHGVoices.find(v => v.voice_id === id) || null);
                           }}
                         >
@@ -646,9 +662,9 @@ export default function CreatePage() {
                           </SelectTrigger>
                           <SelectContent className="max-h-52">
                             {(() => {
-                              const filteredHGVoices = heygenGenderFilter === 'all'
-                                ? heygenVoices
-                                : heygenVoices.filter(v => v.gender === heygenGenderFilter);
+                              const filteredHGVoices = heygenVoices
+                                .filter(v => heygenGenderFilter === 'all' || v.gender === heygenGenderFilter)
+                                .filter(v => v.name.toLowerCase().includes(heygenSearchTerm.toLowerCase()));
                               return filteredHGVoices.map(v => (
                                 <SelectItem key={v.voice_id} value={v.voice_id}>
                                   {v.name}
