@@ -289,6 +289,7 @@ export default function CreatePage() {
         el_heygen_stability: elHGStability,
       };
 
+      console.log("Calling:", `${API_URL}/videos/generate-advanced`);
       await axios.post(`${API_URL}/videos/generate-advanced`, payload);
       updateUserCredits(user.credits - 1);
       toast.success('Advanced video generation started! Check History for status.');
