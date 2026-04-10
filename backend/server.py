@@ -1019,6 +1019,12 @@ async def generate_video_advanced(
     """
     video = None
     try:
+        logging.info(f"generate-advanced called with avatar_id: {data.avatar_id}")
+        logging.info(f"voice_mode: {data.voice_mode}")
+        logging.info(f"use_el_in_heygen: {data.use_el_in_heygen}")
+        logging.info(f"heygen_voice_name: {data.heygen_voice_name}")
+        logging.info(f"heygen_voice_id: {data.heygen_voice_id}")
+        
         # Credit check
         if current_user["credits"] < 1:
             raise HTTPException(status_code=400, detail="Insufficient credits")
