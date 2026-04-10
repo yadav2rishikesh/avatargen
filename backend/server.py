@@ -205,6 +205,7 @@ class VideoCreateAdvanced(BaseModel):
     # "elevenlabs"  = direct ElevenLabs API (Method B)
     # HeyGen voice fields (voice_mode = "heygen")
     heygen_voice_id: Optional[str] = None
+    heygen_voice_name: Optional[str] = None
     use_el_in_heygen: bool = False        # True = imported EL voice in HeyGen
     el_heygen_model: str = "eleven_multilingual_v2"
     el_heygen_stability: float = 0.5     # will be quantized to 0, 0.5, or 1.0
@@ -979,21 +980,51 @@ async def generate_video_advanced(
                 "type": "audio",
                 "audio_asset_id": asset_id
             }
-        elif data.voice_mode == "heygen" and data.use_el_in_heygen and data.heygen_voice_id:
-            # Method A: HeyGen-native ElevenLabs voice
-            # Quantize stability — only 0, 0.5, 1.0 allowed
-            allowed = [0.0, 0.5, 1.0]
-            stab = min(allowed, key=lambda x: abs(x - data.el_heygen_stability))
-            voice_block = {
-                "type": "text",
-                "input_text": data.script,
-                "voice_id": data.heygen_voice_id,
-                "speed": 1.0,
-                "elevanlabs_settings": {
-                    "model": data.el_heygen_model,
-                    "stability": stab
+        elif data.voice_mode == "heygen" and data.use_el_in_heygen:
+            # New Method: Match voice name to ElevenLabs voice_id
+            # then generate audio directly and upload to HeyGen
+            matched_el_voice_id = None
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as el_client:
+                    el_resp = await el_client.get(
+                        "https://api.elevenlabs.io/v1/voices",
+                        headers={"xi-api-key": ELEVENLABS_API_KEY}
+                    )
+                    el_resp.raise_for_status()
+                    el_voices = el_resp.json().get("voices", [])
+
+                search_name = (data.heygen_voice_name or "").lower().strip()
+                for v in el_voices:
+                    el_name = v.get("name", "").lower().strip()
+                    if el_name == search_name or search_name in el_name or el_name in search_name:
+                        matched_el_voice_id = v.get("voice_id")
+                        logging.info(f"Matched EL voice: {v.get('name')} -> {matched_el_voice_id}")
+                        break
+            except Exception as e:
+                logging.error(f"EL voice match error: {e}")
+
+            if matched_el_voice_id:
+                asset_id = await _elevenlabs_to_heygen_asset(
+                    el_api_key=ELEVENLABS_API_KEY,
+                    el_voice_id=matched_el_voice_id,
+                    script=data.script,
+                    model_id=data.el_heygen_model,
+                    stability=data.el_heygen_stability,
+                    similarity_boost=0.75
+                )
+                voice_block = {
+                    "type": "audio",
+                    "audio_asset_id": asset_id
                 }
-            }
+                logging.info(f"Using EL audio asset: {asset_id}")
+            else:
+                logging.warning(f"No EL voice match for: {data.heygen_voice_name}, using HeyGen voice")
+                voice_block = {
+                    "type": "text",
+                    "input_text": data.script,
+                    "voice_id": data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8",
+                    "speed": 1.0
+                }
         elif data.heygen_voice_id:
             # Standard HeyGen voice
             voice_block = {

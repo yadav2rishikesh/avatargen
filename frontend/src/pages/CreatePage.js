@@ -265,6 +265,7 @@ export default function CreatePage() {
         enable_captions: enableCaptions,
         voice_mode: 'heygen',
         heygen_voice_id: selectedHGVoice?.voice_id || null,
+        heygen_voice_name: selectedHGVoice?.name || null,
         use_el_in_heygen: isELInHG,
         el_heygen_model: elHGModel,
         el_heygen_stability: elHGStability,
