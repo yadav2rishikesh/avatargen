@@ -38,8 +38,8 @@ export default function Dashboard() {
                 <Video className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-heading font-bold text-primary">JioGen AI</h1>
-                <p className="text-xs text-slate-500">Avatar Video Platform</p>
+                <h1 className="text-xl font-heading font-bold text-primary">Jio Finance</h1>
+                <p className="text-xs text-slate-500">Avatars</p>
               </div>
             </Link>
 

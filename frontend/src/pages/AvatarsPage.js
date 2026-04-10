@@ -51,10 +51,10 @@ export default function AvatarsPage() {
     <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-4xl md:text-5xl font-heading font-bold text-slate-900 mb-3">
-          Select Your Avatar
+          Choose Your AI Host
         </h1>
         <p className="text-lg text-slate-600">
-          Choose from our collection of professional Jio-approved avatars
+          Make custom AI generated avatar videos in minutes.
         </p>
       </div>
 
