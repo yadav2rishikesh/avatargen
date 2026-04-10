@@ -330,20 +330,16 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
             
             all_avatars = data.get("data", {}).get("avatars", [])
             
-            # Deduplicate by avatar_id and add display_name
             seen_ids = set()
-            unique_avatars = []
+            filtered_avatars = []
             for avatar in all_avatars:
                 avatar_id = avatar.get("avatar_id")
-                if avatar_id not in seen_ids:
+                if avatar_id in JIO_AVATARS and avatar_id not in seen_ids:
                     seen_ids.add(avatar_id)
-                    if avatar_id in JIO_AVATARS:
-                        avatar["display_name"] = JIO_AVATARS[avatar_id]
-                    else:
-                        avatar["display_name"] = avatar.get("avatar_name", "Avatar")
-                    unique_avatars.append(avatar)
+                    avatar["display_name"] = JIO_AVATARS[avatar_id]
+                    filtered_avatars.append(avatar)
             
-            return {"avatars": unique_avatars}
+            return {"avatars": filtered_avatars}
     except Exception as e:
         logging.error(f"Error fetching avatars: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch avatars: {str(e)}")
