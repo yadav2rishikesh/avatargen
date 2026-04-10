@@ -42,10 +42,10 @@ security = HTTPBearer()
 
 # Jio Approved Avatar IDs and their display names
 JIO_AVATARS = {
-    "b65c8b326bd546aba0edf4f4be65f37e": "Manish – Jio Avatar",
+    "b65c8b326bd546aba0edf4f4be65f37e": "Manish",
     "23a8ea2ea0294fe68b0f1f514081bf1d": "Ekta",
     "10483c6d38564597a9491c0dbff9b0dd": "Swati Verma",
-    "b6529e10fb6a45aabe730acff799aebf": "Prashant R | JFS Avatar",
+    "b6529e10fb6a45aabe730acff799aebf": "Prashant",
     "38ab20bc42634d368d4072b102aaa3d9": "Anoushka Chauhan",
     "3024995942d148c887c9df208444c663": "Garvik"
 }
