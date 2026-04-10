@@ -791,9 +791,12 @@ async def _elevenlabs_to_heygen_asset(
 
         # 2. Upload MP3 to HeyGen
         hg_resp = await client.post(
-            "https://api.heygen.com/v1/asset",
-            headers={"X-Api-Key": HEYGEN_API_KEY},
-            files={"file": ("audio.mp3", io.BytesIO(el_resp.content), "audio/mpeg")}
+            "https://upload.heygen.com/v1/asset",
+            headers={
+                "X-Api-Key": HEYGEN_API_KEY,
+                "Content-Type": "audio/mpeg"
+            },
+            content=el_resp.content
         )
         logging.info(f"HeyGen asset upload status: {hg_resp.status_code}")
         logging.info(f"HeyGen asset response: {hg_resp.text}")
