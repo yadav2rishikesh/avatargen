@@ -127,31 +127,22 @@ export default function CreatePage() {
   };
 
   const handleVoicePreview = async () => {
-    if (!script.trim()) { toast.error('Please enter a script first'); return; }
-    
-    if (voiceTab === 'elevenlabs') {
-      if (!selectedELVoice) { toast.error('Select an ElevenLabs voice first'); return; }
-      setLoading(true);
-      try {
-        const res = await axios.post(`${API_URL}/elevenlabs/preview`, {
-          elevenlabs_api_key: elApiKey,
-          elevenlabs_voice_id: selectedELVoice.voice_id,
-          script,
-          model_id: elModel,
-          stability: elStability,
-          similarity_boost: elSimilarity,
-        });
-        setAudioPreview(res.data.audio_base64);
-        toast.success('ElevenLabs preview ready!');
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Preview failed');
-      } finally {
-        setLoading(false);
-      }
+    if (!script.trim()) {
+      toast.error('Please enter a script first');
       return;
     }
-
-    // Original HeyGen preview
+    
+    // If HeyGen voice selected, use its preview_audio directly
+    if (selectedHGVoice?.preview_audio) {
+      setAudioPreview(null);
+      // Play the preview_audio URL
+      const audio = new Audio(selectedHGVoice.preview_audio);
+      audio.play();
+      toast.success('Playing voice sample!');
+      return;
+    }
+    
+    // Original fallback
     setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/voice/preview`, { script, language });
@@ -244,11 +235,6 @@ export default function CreatePage() {
     if (!title.trim()) { toast.error('Please enter a title'); return; }
     if (user.credits < 1) { toast.error('Insufficient credits'); return; }
     
-    if (voiceTab === 'elevenlabs' && !selectedELVoice) {
-      toast.error('Please select an ElevenLabs voice');
-      return;
-    }
-    
     const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
     setGeneratingAdvanced(true);
     try {
@@ -264,22 +250,12 @@ export default function CreatePage() {
         width: w,
         height: h,
         enable_captions: enableCaptions,
+        voice_mode: 'heygen',
+        heygen_voice_id: selectedHGVoice?.voice_id || null,
+        use_el_in_heygen: isELInHG,
+        el_heygen_model: elHGModel,
+        el_heygen_stability: elHGStability,
       };
-
-      if (voiceTab === 'elevenlabs') {
-        payload.voice_mode = 'elevenlabs';
-        payload.elevenlabs_api_key = elApiKey;
-        payload.elevenlabs_voice_id = selectedELVoice.voice_id;
-        payload.elevenlabs_model_id = elModel;
-        payload.el_stability = elStability;
-        payload.el_similarity_boost = elSimilarity;
-      } else {
-        payload.voice_mode = 'heygen';
-        payload.heygen_voice_id = selectedHGVoice?.voice_id || null;
-        payload.use_el_in_heygen = isELInHG;
-        payload.el_heygen_model = elHGModel;
-        payload.el_heygen_stability = elHGStability;
-      }
 
       await axios.post(`${API_URL}/videos/generate-advanced`, payload);
       updateUserCredits(user.credits - 1);
@@ -842,9 +818,7 @@ export default function CreatePage() {
               <CardContent className="pt-6 space-y-4">
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="outline" className="text-xs">
-                    {voiceTab === 'elevenlabs' && selectedELVoice
-                      ? `🎙 ElevenLabs: ${selectedELVoice.name}`
-                      : selectedHGVoice
+                    {selectedHGVoice
                       ? `🔊 ${selectedHGVoice.name}`
                       : '🔊 HeyGen Default'}
                   </Badge>
