@@ -30,6 +30,7 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 HEYGEN_API_KEY = os.environ.get('HEYGEN_API_KEY')
+ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', 'sk_cfa652388dad22ed13e0d36de0a31b235e34a91a2dbd21c8')
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -750,12 +751,13 @@ async def _elevenlabs_to_heygen_asset(
     """
     Calls ElevenLabs TTS → uploads MP3 to HeyGen → returns audio_asset_id
     """
+    api_key = el_api_key if el_api_key else ELEVENLABS_API_KEY
     async with httpx.AsyncClient(timeout=120.0) as client:
         # 1. Generate audio from ElevenLabs
         el_resp = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{el_voice_id}",
             headers={
-                "xi-api-key": el_api_key,
+                "xi-api-key": api_key,
                 "Accept": "audio/mpeg",
                 "Content-Type": "application/json"
             },
@@ -812,10 +814,11 @@ async def get_elevenlabs_voices(
 ):
     """Fetch user's ElevenLabs voices. API key only used for this request, never stored."""
     try:
+        api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 "https://api.elevenlabs.io/v1/voices",
-                headers={"xi-api-key": data.elevenlabs_api_key}
+                headers={"xi-api-key": api_key}
             )
             if resp.status_code == 401:
                 raise HTTPException(
@@ -849,12 +852,13 @@ async def elevenlabs_preview(
 ):
     """Generate ElevenLabs voice preview using first 500 chars. Returns base64 MP3."""
     try:
+        api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
         text = data.script[:500] if data.script.strip() else "Hello, this is a voice preview."
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{data.elevenlabs_voice_id}",
                 headers={
-                    "xi-api-key": data.elevenlabs_api_key,
+                    "xi-api-key": api_key,
                     "Accept": "audio/mpeg",
                     "Content-Type": "application/json"
                 },

@@ -557,7 +557,7 @@ export default function CreatePage() {
               </CardContent>
             </Card>
 
-            {/* NEW: Voice Engine Card */}
+            {/* Voice Engine Card */}
             <Card className="border-2 border-slate-200">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -567,325 +567,147 @@ export default function CreatePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Two tabs */}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setVoiceTab('heygen')}
-                    className={`p-3 rounded-lg border-2 text-left transition-all ${
-                      voiceTab === 'heygen'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
+                <div className="space-y-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadHGVoices}
+                    disabled={loadingHGVoices}
+                    className="w-full gap-2"
                   >
-                    <p className="text-sm font-semibold text-slate-900">HeyGen Voice</p>
-                    <p className="text-xs text-slate-500 mt-0.5">Built-in AI voices</p>
-                  </button>
-                  <button
-                    onClick={() => setVoiceTab('elevenlabs')}
-                    className={`p-3 rounded-lg border-2 text-left transition-all ${
-                      voiceTab === 'elevenlabs'
-                        ? 'border-amber-500 bg-amber-50'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-slate-900">ElevenLabs 🎙</p>
-                    <p className="text-xs text-slate-500 mt-0.5">Premium realistic voices</p>
-                  </button>
-                </div>
+                    {loadingHGVoices
+                      ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
+                      : 'Load HeyGen Voices'}
+                  </Button>
 
-                {/* HeyGen Voice tab */}
-                {voiceTab === 'heygen' && (
-                  <div className="space-y-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleLoadHGVoices}
-                      disabled={loadingHGVoices}
-                      className="w-full gap-2"
-                    >
-                      {loadingHGVoices
-                        ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
-                        : 'Load HeyGen Voices'}
-                    </Button>
-
-                    {heygenVoices.length > 0 && (
-                      <>
-                        {/* Gender filter */}
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-600">Filter by Gender</Label>
-                          <div className="flex gap-2">
-                            {['all', 'male', 'female'].map(g => (
-                              <button
-                                key={g}
-                                onClick={() => {
-                                  setHeygenGenderFilter(g);
-                                  setSelectedHGVoice(null);
-                                }}
-                                className={`flex-1 py-1.5 text-xs rounded border transition-all capitalize ${
-                                  heygenGenderFilter === g
-                                    ? 'border-primary bg-primary/5 text-primary font-semibold'
-                                    : 'border-slate-200 text-slate-600'
-                                }`}
-                              >
-                                {g}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Search input */}
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-600">Search by Name</Label>
-                          <Input
-                            type="text"
-                            placeholder="Type to search voices..."
-                            value={heygenSearchTerm}
-                            onChange={(e) => {
-                              setHeygenSearchTerm(e.target.value);
-                              setSelectedHGVoice(null);
-                            }}
-                            className="h-9 text-sm"
-                          />
-                        </div>
-
-                        <Select
-                          value={selectedHGVoice?.voice_id || ''}
-                          onValueChange={(id) => {
-                            const filteredHGVoices = heygenVoices
-                              .filter(v => heygenGenderFilter === 'all' || v.gender === heygenGenderFilter)
-                              .filter(v => v.name.toLowerCase().includes(heygenSearchTerm.toLowerCase()));
-                            setSelectedHGVoice(filteredHGVoices.find(v => v.voice_id === id) || null);
-                          }}
-                        >
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Select a HeyGen voice..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-52">
-                            {(() => {
-                              const filteredHGVoices = heygenVoices
-                                .filter(v => heygenGenderFilter === 'all' || v.gender === heygenGenderFilter)
-                                .filter(v => v.name.toLowerCase().includes(heygenSearchTerm.toLowerCase()));
-                              return filteredHGVoices.map(v => (
-                                <SelectItem key={v.voice_id} value={v.voice_id}>
-                                  {v.name}
-                                  {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
-                                </SelectItem>
-                              ));
-                            })()}
-                          </SelectContent>
-                        </Select>
-
-                        {selectedHGVoice?.preview_audio && (
-                          <div className="bg-slate-50 rounded-lg p-2">
-                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
-                            <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between pt-1">
-                          <div>
-                            <p className="text-sm font-medium text-slate-900">This is an ElevenLabs voice</p>
-                            <p className="text-xs text-slate-500">Enable if this voice was imported from ElevenLabs</p>
-                          </div>
-                          <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
-                        </div>
-
-                        {isELInHG && (
-                          <div className="space-y-3 pl-2 border-l-2 border-amber-200">
-                            <div className="space-y-1">
-                              <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
-                              <Select value={elHGModel} onValueChange={setElHGModel}>
-                                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2</SelectItem>
-                                  <SelectItem value="eleven_v3">eleven_v3</SelectItem>
-                                  <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5</SelectItem>
-                                  <SelectItem value="eleven_turbo_v2">eleven_turbo_v2</SelectItem>
-                                  <SelectItem value="eleven_monolingual_v1">eleven_monolingual_v1</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs text-slate-600">
-                                Stability: {elHGStability === 0 ? '0' : elHGStability === 1.0 ? '1.0' : '0.5'}
-                              </Label>
-                              <div className="flex gap-2">
-                                {[0, 0.5, 1.0].map(v => (
-                                  <button
-                                    key={v}
-                                    onClick={() => setElHGStability(v)}
-                                    className={`flex-1 py-1.5 text-xs rounded border transition-all ${
-                                      elHGStability === v
-                                        ? 'border-primary bg-primary/5 text-primary font-semibold'
-                                        : 'border-slate-200 text-slate-600'
-                                    }`}
-                                  >
-                                    {v}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* ElevenLabs tab */}
-                {voiceTab === 'elevenlabs' && (
-                  <div className="space-y-3">
-                    {!elKeyVerified ? (
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-600">Your ElevenLabs API Key</Label>
+                  {heygenVoices.length > 0 && (
+                    <>
+                      {/* Gender filter */}
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-600">Filter by Gender</Label>
                         <div className="flex gap-2">
-                          <Input
-                            type="password"
-                            placeholder="sk_..."
-                            value={elApiKey}
-                            onChange={e => setElApiKey(e.target.value)}
-                            className="h-9 text-sm flex-1"
-                            onKeyDown={e => e.key === 'Enter' && handleLoadELVoices()}
-                          />
-                          <Button
-                            size="sm"
-                            onClick={handleLoadELVoices}
-                            disabled={loadingELVoices || !elApiKey.trim()}
-                          >
-                            {loadingELVoices ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Load'}
-                          </Button>
+                          {['all', 'male', 'female'].map(g => (
+                            <button
+                              key={g}
+                              onClick={() => {
+                                setHeygenGenderFilter(g);
+                                setSelectedHGVoice(null);
+                              }}
+                              className={`flex-1 py-1.5 text-xs rounded border transition-all capitalize ${
+                                heygenGenderFilter === g
+                                  ? 'border-primary bg-primary/5 text-primary font-semibold'
+                                  : 'border-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {g}
+                            </button>
+                          ))}
                         </div>
-                        <p className="text-xs text-slate-400">
-                          Get key: elevenlabs.io → Profile → API Keys
-                        </p>
                       </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-green-600 font-medium">✓ {elVoices.length} voices loaded</span>
-                          <button
-                            onClick={() => {
-                              setElKeyVerified(false);
-                              setElVoices([]);
-                              setSelectedELVoice(null);
-                            }}
-                            className="text-xs text-primary underline"
-                          >
-                            Change key
-                          </button>
-                        </div>
 
-                        {/* Language filter */}
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-600">Filter by Language</Label>
-                          <div className="grid grid-cols-3 gap-1">
-                            {['all', 'hindi', 'tamil', 'telugu', 'english-indian'].map(lang => (
-                              <button
-                                key={lang}
-                                onClick={() => {
-                                  setElLangFilter(lang);
-                                  setSelectedELVoice(null);
-                                }}
-                                className={`py-1.5 px-2 text-xs rounded border transition-all capitalize ${
-                                  elLangFilter === lang
-                                    ? 'border-amber-500 bg-amber-50 text-amber-700 font-semibold'
-                                    : 'border-slate-200 text-slate-600'
-                                }`}
-                              >
-                                {lang === 'english-indian' ? 'En-Indian' : lang}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <Select
-                          value={selectedELVoice?.voice_id || ''}
-                          onValueChange={id => {
-                            const filteredELVoices = (() => {
-                              if (elLangFilter === 'all') return elVoices;
-                              return elVoices.filter(v => {
-                                const accent = (v.labels?.accent || '').toLowerCase();
-                                const language = (v.labels?.language || '').toLowerCase();
-                                if (elLangFilter === 'hindi') return accent.includes('hindi') || language.includes('hindi');
-                                if (elLangFilter === 'tamil') return accent.includes('tamil') || language.includes('tamil');
-                                if (elLangFilter === 'telugu') return accent.includes('telugu') || language.includes('telugu');
-                                if (elLangFilter === 'english-indian') return accent.includes('indian');
-                                return true;
-                              });
-                            })();
-                            setSelectedELVoice(filteredELVoices.find(v => v.voice_id === id) || null);
+                      {/* Search input */}
+                      <div className="space-y-1">
+                        <Label className="text-xs text-slate-600">Search by Name</Label>
+                        <Input
+                          type="text"
+                          placeholder="Type to search voices..."
+                          value={heygenSearchTerm}
+                          onChange={(e) => {
+                            setHeygenSearchTerm(e.target.value);
+                            setSelectedHGVoice(null);
                           }}
-                        >
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Select an ElevenLabs voice..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-52">
-                            {(() => {
-                              const filteredELVoices = (() => {
-                                if (elLangFilter === 'all') return elVoices;
-                                return elVoices.filter(v => {
-                                  const accent = (v.labels?.accent || '').toLowerCase();
-                                  const language = (v.labels?.language || '').toLowerCase();
-                                  if (elLangFilter === 'hindi') return accent.includes('hindi') || language.includes('hindi');
-                                  if (elLangFilter === 'tamil') return accent.includes('tamil') || language.includes('tamil');
-                                  if (elLangFilter === 'telugu') return accent.includes('telugu') || language.includes('telugu');
-                                  if (elLangFilter === 'english-indian') return accent.includes('indian');
-                                  return true;
-                                });
-                              })();
-                              return filteredELVoices.map(v => (
-                                <SelectItem key={v.voice_id} value={v.voice_id}>
-                                  <span className="font-medium">{v.name}</span>
-                                  {v.labels?.accent ? <span className="text-xs text-slate-400 ml-1">· {v.labels.accent}</span> : null}
-                                </SelectItem>
-                              ));
-                            })()}
-                          </SelectContent>
-                        </Select>
+                          className="h-9 text-sm"
+                        />
+                      </div>
 
-                        {selectedELVoice?.preview_url && (
-                          <div className="bg-slate-50 rounded-lg p-2">
-                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
-                            <audio controls src={selectedELVoice.preview_url} className="w-full h-8" />
-                          </div>
-                        )}
+                      <Select
+                        value={selectedHGVoice?.voice_id || ''}
+                        onValueChange={(id) => {
+                          const filteredHGVoices = heygenVoices
+                            .filter(v => heygenGenderFilter === 'all' ? true : v.gender === heygenGenderFilter)
+                            .filter(v => heygenSearchTerm === '' ? true : 
+                              v.name?.toLowerCase().includes(heygenSearchTerm.toLowerCase()) ||
+                              v.language?.toLowerCase().includes(heygenSearchTerm.toLowerCase())
+                            );
+                          setSelectedHGVoice(filteredHGVoices.find(v => v.voice_id === id) || null);
+                        }}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Select a HeyGen voice..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-52">
+                          {(() => {
+                            const filteredHGVoices = heygenVoices
+                              .filter(v => heygenGenderFilter === 'all' ? true : v.gender === heygenGenderFilter)
+                              .filter(v => heygenSearchTerm === '' ? true : 
+                                v.name?.toLowerCase().includes(heygenSearchTerm.toLowerCase()) ||
+                                v.language?.toLowerCase().includes(heygenSearchTerm.toLowerCase())
+                              );
+                            return filteredHGVoices.map(v => (
+                              <SelectItem key={v.voice_id} value={v.voice_id}>
+                                {v.name}
+                                {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
+                              </SelectItem>
+                            ));
+                          })()}
+                        </SelectContent>
+                      </Select>
 
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-600">Model</Label>
-                          <Select value={elModel} onValueChange={setElModel}>
-                            <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2 — Best quality</SelectItem>
-                              <SelectItem value="eleven_v3">eleven_v3 — Latest</SelectItem>
-                              <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5 — Fastest</SelectItem>
-                            </SelectContent>
-                          </Select>
+                      {selectedHGVoice?.preview_audio && (
+                        <div className="bg-slate-50 rounded-lg p-2">
+                          <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
+                          <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
                         </div>
+                      )}
 
-                        <div className="grid grid-cols-2 gap-3">
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">This is an ElevenLabs voice</p>
+                          <p className="text-xs text-slate-500">Enable if this voice was imported from ElevenLabs</p>
+                        </div>
+                        <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
+                      </div>
+
+                      {isELInHG && (
+                        <div className="space-y-3 pl-2 border-l-2 border-amber-200">
                           <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">Stability: {elStability.toFixed(2)}</Label>
-                            <Slider
-                              min={0} max={1} step={0.05}
-                              value={[elStability]}
-                              onValueChange={([v]) => setElStability(v)}
-                            />
-                            <p className="text-xs text-slate-400">Higher = more consistent</p>
+                            <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
+                            <Select value={elHGModel} onValueChange={setElHGModel}>
+                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2</SelectItem>
+                                <SelectItem value="eleven_v3">eleven_v3</SelectItem>
+                                <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5</SelectItem>
+                                <SelectItem value="eleven_turbo_v2">eleven_turbo_v2</SelectItem>
+                                <SelectItem value="eleven_monolingual_v1">eleven_monolingual_v1</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">Similarity: {elSimilarity.toFixed(2)}</Label>
-                            <Slider
-                              min={0} max={1} step={0.05}
-                              value={[elSimilarity]}
-                              onValueChange={([v]) => setElSimilarity(v)}
-                            />
-                            <p className="text-xs text-slate-400">Higher = closer to original</p>
+                            <Label className="text-xs text-slate-600">
+                              Stability: {elHGStability === 0 ? '0' : elHGStability === 1.0 ? '1.0' : '0.5'}
+                            </Label>
+                            <div className="flex gap-2">
+                              {[0, 0.5, 1.0].map(v => (
+                                <button
+                                  key={v}
+                                  onClick={() => setElHGStability(v)}
+                                  className={`flex-1 py-1.5 text-xs rounded border transition-all ${
+                                    elHGStability === v
+                                      ? 'border-primary bg-primary/5 text-primary font-semibold'
+                                      : 'border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  {v}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
