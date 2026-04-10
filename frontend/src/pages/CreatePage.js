@@ -128,28 +128,34 @@ export default function CreatePage() {
 
   const handleVoicePreview = async () => {
     if (!script.trim()) {
-      toast.error('Please enter a script first');
+      toast.error('Please enter your script first');
       return;
     }
-    
-    // If HeyGen voice selected, use its preview_audio directly
-    if (selectedHGVoice?.preview_audio) {
-      setAudioPreview(null);
-      // Play the preview_audio URL
-      const audio = new Audio(selectedHGVoice.preview_audio);
-      audio.play();
-      toast.success('Playing voice sample!');
+    if (!selectedHGVoice) {
+      toast.error('Please select a voice first');
       return;
     }
-    
-    // Original fallback
+
     setLoading(true);
     try {
-      const response = await axios.post(`${API_URL}/voice/preview`, { script, language });
+      const response = await axios.post(`${API_URL}/elevenlabs/preview`, {
+        elevenlabs_api_key: 'sk_cfa652388dad22ed13e0d36de0a31b235e34a91a2dbd21c8',
+        elevenlabs_voice_id: selectedHGVoice.voice_id,
+        script: script,
+        model_id: elHGModel || 'eleven_multilingual_v2'
+      });
       setAudioPreview(response.data.audio_base64);
-      toast.success('Voice preview ready!');
-    } catch (error) {
-      toast.error('Failed to generate voice preview');
+      toast.success('Preview ready — playing your script!');
+    } catch (err) {
+      // Fallback to original preview if EL fails
+      try {
+        const response = await axios.post(`${API_URL}/voice/preview`, 
+          { script, language });
+        setAudioPreview(response.data.audio_base64);
+        toast.success('Voice preview ready!');
+      } catch {
+        toast.error('Preview failed. Check your script.');
+      }
     } finally {
       setLoading(false);
     }
