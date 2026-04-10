@@ -465,7 +465,8 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
                         },
                         "voice": {
                             "type": "text",
-                            "input_text": data.script
+                            "input_text": data.script,
+                            "voice_id": "1bd001e7e50f421d891986aad5158bc8"
                         }
                     }],
                     "dimension": {
