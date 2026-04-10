@@ -1,15 +1,21 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
+from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta
+import bcrypt
+import jwt
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.openai import OpenAITextToSpeech
+import httpx
+import base64
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -19,52 +25,668 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+# Environment variables
+JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+HEYGEN_API_KEY = os.environ.get('HEYGEN_API_KEY')
+
 # Create the main app without a prefix
 app = FastAPI()
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+security = HTTPBearer()
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
+# Jio Approved Avatar IDs and their display names
+JIO_AVATARS = {
+    "b65c8b326bd546aba0edf4f4be65f37e": "Manish – Jio Avatar",
+    "23a8ea2ea0294fe68b0f1f514081bf1d": "Ekta",
+    "10483c6d38564597a9491c0dbff9b0dd": "Swati Verma",
+    "b6529e10fb6a45aabe730acff799aebf": "Prashant R | JFS Avatar",
+    "38ab20bc42634d368d4072b102aaa3d9": "Anoushka Chauhan",
+    "3024995942d148c887c9df208444c663": "Garvik"
+}
+
+# ============= MODELS =============
+
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    email: EmailStr
+    password_hash: str
+    role: str = "user"  # user or admin
+    credits: int = 100
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class UserSignup(BaseModel):
+    email: EmailStr
+    password: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    role: str
+    credits: int
+    created_at: datetime
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+class TokenResponse(BaseModel):
+    token: str
+    user: UserResponse
+
+class Folder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    name: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class FolderCreate(BaseModel):
+    name: str
+
+class FolderResponse(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+
+class Video(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    avatar_id: str
+    avatar_name: str
+    title: str
+    script: str
+    language: str
+    duration: int
+    video_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    status: str = "queued"  # queued, generating, completed, failed
+    folder_id: Optional[str] = None
+    heygen_video_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class VideoCreate(BaseModel):
+    avatar_id: str
+    avatar_name: str
+    title: str
+    script: str
+    language: str
+    duration: int
+    folder_id: Optional[str] = None
+
+class VideoResponse(BaseModel):
+    id: str
+    avatar_id: str
+    avatar_name: str
+    title: str
+    script: str
+    language: str
+    duration: int
+    video_url: Optional[str]
+    thumbnail_url: Optional[str]
+    status: str
+    folder_id: Optional[str]
+    created_at: datetime
+
+class ScriptGenerateRequest(BaseModel):
+    prompt: str
+
+class ScriptEnhanceRequest(BaseModel):
+    script: str
+
+class ScriptRewriteRequest(BaseModel):
+    script: str
+    tone: str  # Emotional, Energetic, Slow delivery, Fast delivery, Professional
+
+class ScriptResponse(BaseModel):
+    script: str
+
+class VoicePreviewRequest(BaseModel):
+    script: str
+    language: str
+
+class VoicePreviewResponse(BaseModel):
+    audio_base64: str
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str
+    user_id: str
+    role: str  # user or assistant
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+
+class ChatResponse(BaseModel):
+    message: str
+    session_id: str
+
+class UpdateCreditsRequest(BaseModel):
+    credits: int
+
+# ============= AUTH HELPERS =============
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def create_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+# ============= AUTH ROUTES =============
+
+@api_router.post("/auth/signup", response_model=TokenResponse)
+async def signup(data: UserSignup):
+    existing = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
+    user = User(
+        email=data.email,
+        password_hash=hash_password(data.password),
+        role="user",
+        credits=100
+    )
     
-    return status_checks
+    doc = user.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.users.insert_one(doc)
+    
+    token = create_token(user.id, user.email, user.role)
+    user_response = UserResponse(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        credits=user.credits,
+        created_at=user.created_at
+    )
+    
+    return TokenResponse(token=token, user=user_response)
+
+@api_router.post("/auth/login", response_model=TokenResponse)
+async def login(data: UserLogin):
+    user = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    token = create_token(user["id"], user["email"], user["role"])
+    if isinstance(user['created_at'], str):
+        user['created_at'] = datetime.fromisoformat(user['created_at'])
+    
+    user_response = UserResponse(
+        id=user["id"],
+        email=user["email"],
+        role=user["role"],
+        credits=user["credits"],
+        created_at=user["created_at"]
+    )
+    
+    return TokenResponse(token=token, user=user_response)
+
+@api_router.get("/auth/me", response_model=UserResponse)
+async def get_me(current_user: dict = Depends(get_current_user)):
+    if isinstance(current_user['created_at'], str):
+        current_user['created_at'] = datetime.fromisoformat(current_user['created_at'])
+    return UserResponse(**current_user)
+
+# ============= AVATAR ROUTES =============
+
+@api_router.get("/avatars")
+async def get_avatars(current_user: dict = Depends(get_current_user)):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.heygen.com/v2/avatars",
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY
+                },
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            all_avatars = data.get("data", {}).get("avatars", [])
+            
+            # Filter only Jio approved avatars
+            filtered_avatars = []
+            for avatar in all_avatars:
+                avatar_id = avatar.get("avatar_id")
+                if avatar_id in JIO_AVATARS:
+                    avatar["display_name"] = JIO_AVATARS[avatar_id]
+                    filtered_avatars.append(avatar)
+            
+            return {"avatars": filtered_avatars}
+    except Exception as e:
+        logging.error(f"Error fetching avatars: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch avatars: {str(e)}")
+
+# ============= SCRIPT ROUTES =============
+
+@api_router.post("/scripts/generate", response_model=ScriptResponse)
+async def generate_script(data: ScriptGenerateRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"script-gen-{current_user['id']}-{uuid.uuid4()}",
+            system_message="You are a professional scriptwriter for video content. Generate engaging, clear, and concise scripts based on user prompts. Focus on creating content suitable for avatar video presentations."
+        ).with_model("openai", "gpt-5.2")
+        
+        user_message = UserMessage(text=f"Generate a script for: {data.prompt}")
+        response = await chat.send_message(user_message)
+        
+        return ScriptResponse(script=response)
+    except Exception as e:
+        logging.error(f"Error generating script: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate script: {str(e)}")
+
+@api_router.post("/scripts/enhance", response_model=ScriptResponse)
+async def enhance_script(data: ScriptEnhanceRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"script-enhance-{current_user['id']}-{uuid.uuid4()}",
+            system_message="You are a professional script editor. Enhance the provided script by improving vocabulary, clarity, and flow while maintaining the original message and tone."
+        ).with_model("openai", "gpt-5.2")
+        
+        user_message = UserMessage(text=f"Enhance this script:\n\n{data.script}")
+        response = await chat.send_message(user_message)
+        
+        return ScriptResponse(script=response)
+    except Exception as e:
+        logging.error(f"Error enhancing script: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to enhance script: {str(e)}")
+
+@api_router.post("/scripts/rewrite", response_model=ScriptResponse)
+async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        tone_instructions = {
+            "Emotional": "Rewrite with emotional depth, warmth, and connection.",
+            "Energetic": "Rewrite with high energy, enthusiasm, and excitement.",
+            "Slow delivery": "Rewrite for slow, deliberate delivery with pauses and emphasis.",
+            "Fast delivery": "Rewrite for quick, punchy delivery with short sentences.",
+            "Professional": "Rewrite in a formal, professional, and authoritative tone."
+        }
+        
+        instruction = tone_instructions.get(data.tone, "Rewrite in a professional tone.")
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"script-rewrite-{current_user['id']}-{uuid.uuid4()}",
+            system_message=f"You are a professional scriptwriter. {instruction}"
+        ).with_model("openai", "gpt-5.2")
+        
+        user_message = UserMessage(text=f"Rewrite this script:\n\n{data.script}")
+        response = await chat.send_message(user_message)
+        
+        return ScriptResponse(script=response)
+    except Exception as e:
+        logging.error(f"Error rewriting script: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to rewrite script: {str(e)}")
+
+# ============= VOICE PREVIEW ROUTES =============
+
+@api_router.post("/voice/preview", response_model=VoicePreviewResponse)
+async def preview_voice(data: VoicePreviewRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+        
+        # Use first 500 characters for preview to save costs
+        preview_text = data.script[:500]
+        
+        audio_base64 = await tts.generate_speech_base64(
+            text=preview_text,
+            model="tts-1",
+            voice="nova"
+        )
+        
+        return VoicePreviewResponse(audio_base64=audio_base64)
+    except Exception as e:
+        logging.error(f"Error generating voice preview: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate voice preview: {str(e)}")
+
+# ============= VIDEO ROUTES =============
+
+@api_router.post("/videos/generate", response_model=VideoResponse)
+async def generate_video(data: VideoCreate, current_user: dict = Depends(get_current_user)):
+    try:
+        # Check credits
+        if current_user["credits"] < 1:
+            raise HTTPException(status_code=400, detail="Insufficient credits")
+        
+        # Create video record
+        video = Video(
+            user_id=current_user["id"],
+            avatar_id=data.avatar_id,
+            avatar_name=data.avatar_name,
+            title=data.title,
+            script=data.script,
+            language=data.language,
+            duration=data.duration,
+            folder_id=data.folder_id,
+            status="generating"
+        )
+        
+        doc = video.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        await db.videos.insert_one(doc)
+        
+        # Call HeyGen API to generate video
+        async with httpx.AsyncClient() as client:
+            heygen_response = await client.post(
+                "https://api.heygen.com/v2/video/generate",
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "video_inputs": [{
+                        "character": {
+                            "type": "avatar",
+                            "avatar_id": data.avatar_id,
+                            "avatar_style": "normal"
+                        },
+                        "voice": {
+                            "type": "text",
+                            "input_text": data.script
+                        }
+                    }],
+                    "dimension": {
+                        "width": 1280,
+                        "height": 720
+                    },
+                    "test": True  # Set to False for production
+                },
+                timeout=30.0
+            )
+            heygen_response.raise_for_status()
+            heygen_data = heygen_response.json()
+            
+            video_id = heygen_data.get("data", {}).get("video_id")
+            
+            # Update video with HeyGen video ID
+            await db.videos.update_one(
+                {"id": video.id},
+                {"$set": {"heygen_video_id": video_id}}
+            )
+        
+        # Deduct credits
+        await db.users.update_one(
+            {"id": current_user["id"]},
+            {"$inc": {"credits": -1}}
+        )
+        
+        if isinstance(video.created_at, str):
+            video.created_at = datetime.fromisoformat(video.created_at)
+        
+        return VideoResponse(**video.model_dump())
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HeyGen API error: {e.response.text}")
+        await db.videos.update_one(
+            {"id": video.id},
+            {"$set": {"status": "failed"}}
+        )
+        raise HTTPException(status_code=500, detail=f"Video generation failed: {e.response.text}")
+    except Exception as e:
+        logging.error(f"Error generating video: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate video: {str(e)}")
+
+@api_router.get("/videos/status/{video_id}")
+async def get_video_status(video_id: str, current_user: dict = Depends(get_current_user)):
+    try:
+        video = await db.videos.find_one({"id": video_id}, {"_id": 0})
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # Check if user owns the video or is admin
+        if video["user_id"] != current_user["id"] and current_user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # If video is still generating, check HeyGen status
+        if video["status"] == "generating" and video.get("heygen_video_id"):
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}",
+                    headers={"X-Api-Key": HEYGEN_API_KEY},
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                status_data = response.json()
+                
+                heygen_status = status_data.get("data", {}).get("status")
+                video_url = status_data.get("data", {}).get("video_url")
+                thumbnail_url = status_data.get("data", {}).get("thumbnail_url")
+                
+                if heygen_status == "completed":
+                    await db.videos.update_one(
+                        {"id": video_id},
+                        {"$set": {
+                            "status": "completed",
+                            "video_url": video_url,
+                            "thumbnail_url": thumbnail_url
+                        }}
+                    )
+                    video["status"] = "completed"
+                    video["video_url"] = video_url
+                    video["thumbnail_url"] = thumbnail_url
+                elif heygen_status == "failed":
+                    await db.videos.update_one(
+                        {"id": video_id},
+                        {"$set": {"status": "failed"}}
+                    )
+                    video["status"] = "failed"
+        
+        if isinstance(video['created_at'], str):
+            video['created_at'] = datetime.fromisoformat(video['created_at'])
+        
+        return VideoResponse(**video)
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HeyGen status check error: {e.response.text}")
+        raise HTTPException(status_code=500, detail="Failed to check video status")
+    except Exception as e:
+        logging.error(f"Error checking video status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check video status: {str(e)}")
+
+@api_router.get("/videos", response_model=List[VideoResponse])
+async def get_videos(current_user: dict = Depends(get_current_user)):
+    query = {"user_id": current_user["id"]}
+    videos = await db.videos.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    for video in videos:
+        if isinstance(video['created_at'], str):
+            video['created_at'] = datetime.fromisoformat(video['created_at'])
+    
+    return [VideoResponse(**video) for video in videos]
+
+@api_router.get("/videos/{video_id}", response_model=VideoResponse)
+async def get_video(video_id: str, current_user: dict = Depends(get_current_user)):
+    video = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    if video["user_id"] != current_user["id"] and current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if isinstance(video['created_at'], str):
+        video['created_at'] = datetime.fromisoformat(video['created_at'])
+    
+    return VideoResponse(**video)
+
+# ============= FOLDER ROUTES =============
+
+@api_router.post("/folders", response_model=FolderResponse)
+async def create_folder(data: FolderCreate, current_user: dict = Depends(get_current_user)):
+    folder = Folder(
+        user_id=current_user["id"],
+        name=data.name
+    )
+    
+    doc = folder.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.folders.insert_one(doc)
+    
+    if isinstance(folder.created_at, str):
+        folder.created_at = datetime.fromisoformat(folder.created_at)
+    
+    return FolderResponse(**folder.model_dump())
+
+@api_router.get("/folders", response_model=List[FolderResponse])
+async def get_folders(current_user: dict = Depends(get_current_user)):
+    folders = await db.folders.find({"user_id": current_user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    for folder in folders:
+        if isinstance(folder['created_at'], str):
+            folder['created_at'] = datetime.fromisoformat(folder['created_at'])
+    
+    return [FolderResponse(**folder) for folder in folders]
+
+@api_router.delete("/folders/{folder_id}")
+async def delete_folder(folder_id: str, current_user: dict = Depends(get_current_user)):
+    folder = await db.folders.find_one({"id": folder_id}, {"_id": 0})
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    
+    if folder["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Remove folder_id from all videos in this folder
+    await db.videos.update_many(
+        {"folder_id": folder_id},
+        {"$set": {"folder_id": None}}
+    )
+    
+    await db.folders.delete_one({"id": folder_id})
+    return {"message": "Folder deleted"}
+
+# ============= CHATBOT ROUTES =============
+
+@api_router.post("/chat/message", response_model=ChatResponse)
+async def chat_message(data: ChatRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        # Save user message
+        user_msg = ChatMessage(
+            session_id=data.session_id,
+            user_id=current_user["id"],
+            role="user",
+            content=data.message
+        )
+        user_doc = user_msg.model_dump()
+        user_doc['created_at'] = user_doc['created_at'].isoformat()
+        await db.chat_messages.insert_one(user_doc)
+        
+        # Get chat history for context
+        history = await db.chat_messages.find(
+            {"session_id": data.session_id},
+            {"_id": 0}
+        ).sort("created_at", 1).to_list(50)
+        
+        # Build conversation context
+        conversation = "\n".join([
+            f"{msg['role']}: {msg['content']}" for msg in history[-10:]
+        ])
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=data.session_id,
+            system_message="You are a helpful AI assistant for JioGen AI Avatar Video Platform. Help users create video scripts by understanding their needs, suggesting improvements, and generating content. Be conversational and helpful."
+        ).with_model("openai", "gpt-5.2")
+        
+        user_message = UserMessage(text=data.message)
+        response = await chat.send_message(user_message)
+        
+        # Save assistant message
+        assistant_msg = ChatMessage(
+            session_id=data.session_id,
+            user_id=current_user["id"],
+            role="assistant",
+            content=response
+        )
+        assistant_doc = assistant_msg.model_dump()
+        assistant_doc['created_at'] = assistant_doc['created_at'].isoformat()
+        await db.chat_messages.insert_one(assistant_doc)
+        
+        return ChatResponse(message=response, session_id=data.session_id)
+    except Exception as e:
+        logging.error(f"Error in chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+# ============= ADMIN ROUTES =============
+
+@api_router.get("/admin/users", response_model=List[UserResponse])
+async def get_all_users(current_user: dict = Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    
+    for user in users:
+        if isinstance(user['created_at'], str):
+            user['created_at'] = datetime.fromisoformat(user['created_at'])
+    
+    return [UserResponse(**user) for user in users]
+
+@api_router.get("/admin/videos", response_model=List[VideoResponse])
+async def get_all_videos(current_user: dict = Depends(require_admin)):
+    videos = await db.videos.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    for video in videos:
+        if isinstance(video['created_at'], str):
+            video['created_at'] = datetime.fromisoformat(video['created_at'])
+    
+    return [VideoResponse(**video) for video in videos]
+
+@api_router.put("/admin/users/{user_id}/credits")
+async def update_user_credits(user_id: str, data: UpdateCreditsRequest, current_user: dict = Depends(require_admin)):
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"credits": data.credits}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {"message": "Credits updated"}
+
+@api_router.get("/admin/folders", response_model=List[FolderResponse])
+async def get_all_folders(current_user: dict = Depends(require_admin)):
+    folders = await db.folders.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    for folder in folders:
+        if isinstance(folder['created_at'], str):
+            folder['created_at'] = datetime.fromisoformat(folder['created_at'])
+    
+    return [FolderResponse(**folder) for folder in folders]
 
 # Include the router in the main app
 app.include_router(api_router)
