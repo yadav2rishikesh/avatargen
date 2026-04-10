@@ -179,6 +179,10 @@ class HeyGenTTSRequest(BaseModel):
     voice_id: str
     script: str
 
+class ScriptPreviewRequest(BaseModel):
+    script: str
+    heygen_voice_name: str
+
 class ElevenLabsVoicesRequest(BaseModel):
     elevenlabs_api_key: str
 
@@ -840,6 +844,76 @@ async def heygen_tts_preview(
             }
     except Exception as e:
         logging.error(f"HeyGen TTS preview error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/voice/script-preview")
+async def voice_script_preview(
+    data: ScriptPreviewRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Generate a voice preview using ElevenLabs by matching the HeyGen voice name.
+    Returns base64 audio of the script spoken in the matched ElevenLabs voice.
+    """
+    try:
+        # 1. Fetch ElevenLabs voices and find a match by name
+        matched_el_voice_id = None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            el_resp = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": ELEVENLABS_API_KEY}
+            )
+            el_resp.raise_for_status()
+            el_voices = el_resp.json().get("voices", [])
+            
+            search_name = (data.heygen_voice_name or "").lower().strip()
+            for v in el_voices:
+                el_name = v.get("name", "").lower().strip()
+                if el_name == search_name or search_name in el_name or el_name in search_name:
+                    matched_el_voice_id = v.get("voice_id")
+                    logging.info(f"Script preview matched EL voice: {v.get('name')} -> {matched_el_voice_id}")
+                    break
+        
+        if not matched_el_voice_id:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No ElevenLabs voice found matching '{data.heygen_voice_name}'"
+            )
+        
+        # 2. Generate TTS with matched voice (first 500 chars for preview)
+        preview_text = data.script[:500] if data.script.strip() else "Hello, this is a voice preview."
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            tts_resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{matched_el_voice_id}",
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": preview_text,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                }
+            )
+            if tts_resp.status_code == 401:
+                raise HTTPException(status_code=500, detail="ElevenLabs API key invalid")
+            tts_resp.raise_for_status()
+            
+            return {
+                "audio_base64": base64.b64encode(tts_resp.content).decode("utf-8"),
+                "matched_voice_name": data.heygen_voice_name
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Script preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

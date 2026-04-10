@@ -138,21 +138,37 @@ export default function CreatePage() {
 
     setLoading(true);
     try {
-      const res = await axios.post(
-        `${API_URL}/heygen/tts-preview`,
-        {
-          voice_id: selectedHGVoice.voice_id,
-          script: script
+      // If ElevenLabs toggle is ON, use the new script-preview endpoint
+      if (isELInHG && selectedHGVoice?.name) {
+        const res = await axios.post(
+          `${API_URL}/voice/script-preview`,
+          {
+            script: script,
+            heygen_voice_name: selectedHGVoice.name
+          }
+        );
+        if (res.data.audio_base64) {
+          setAudioPreview(res.data.audio_base64);
+          toast.success(`Playing script with ElevenLabs voice: ${res.data.matched_voice_name || selectedHGVoice.name}`);
         }
-      );
+      } else {
+        // Use HeyGen native TTS preview
+        const res = await axios.post(
+          `${API_URL}/heygen/tts-preview`,
+          {
+            voice_id: selectedHGVoice.voice_id,
+            script: script
+          }
+        );
 
-      if (res.data.audio_url) {
-        const audio = new Audio(res.data.audio_url);
-        audio.play();
-        toast.success('Playing your script in selected voice!');
-      } else if (res.data.audio_base64) {
-        setAudioPreview(res.data.audio_base64);
-        toast.success('Preview ready!');
+        if (res.data.audio_url) {
+          const audio = new Audio(res.data.audio_url);
+          audio.play();
+          toast.success('Playing your script in selected voice!');
+        } else if (res.data.audio_base64) {
+          setAudioPreview(res.data.audio_base64);
+          toast.success('Preview ready!');
+        }
       }
     } catch (err) {
       // Fallback: play native voice sample from HeyGen
@@ -161,7 +177,8 @@ export default function CreatePage() {
         audio.play();
         toast.success('Playing voice sample for selected voice');
       } else {
-        toast.error('Preview failed. Please try again.');
+        const detail = err.response?.data?.detail || 'Preview failed. Please try again.';
+        toast.error(detail);
       }
     } finally {
       setLoading(false);
