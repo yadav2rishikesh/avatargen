@@ -98,10 +98,6 @@ export default function AvatarsPage() {
                     <h3 className="text-lg font-heading font-semibold text-slate-900 mb-1">
                       {avatar.display_name || avatar.avatar_name}
                     </h3>
-                    <p className="text-sm text-slate-500">
-                      {avatar.gender ? `${avatar.gender} • ` : ''}
-                      Professional Avatar
-                    </p>
                   </div>
                 </Card>
               </motion.div>
