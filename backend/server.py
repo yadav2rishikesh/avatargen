@@ -533,6 +533,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
         
         # If video is still generating, check HeyGen status
         if video["status"] == "generating" and video.get("heygen_video_id"):
+            logging.info(f"Checking HeyGen status for: {video['heygen_video_id']}")
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}",
@@ -541,13 +542,16 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                 )
                 response.raise_for_status()
                 status_data = response.json()
+                logging.info(f"HeyGen response: {status_data}")
                 
                 heygen_status = status_data.get("data", {}).get("status")
                 video_url = status_data.get("data", {}).get("video_url")
                 thumbnail_url = status_data.get("data", {}).get("thumbnail_url")
                 
-                if heygen_status == "completed":
-                    await db.videos.update_one(
+                logging.info(f"Parsed - status: {heygen_status}, video_url: {video_url}, thumbnail_url: {thumbnail_url}")
+                
+                if heygen_status == "completed" and video_url:
+                    update_result = await db.videos.update_one(
                         {"id": video_id},
                         {"$set": {
                             "status": "completed",
@@ -555,6 +559,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                             "thumbnail_url": thumbnail_url
                         }}
                     )
+                    logging.info(f"MongoDB update result - matched: {update_result.matched_count}, modified: {update_result.modified_count}")
                     video["status"] = "completed"
                     video["video_url"] = video_url
                     video["thumbnail_url"] = thumbnail_url
@@ -564,6 +569,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                         {"$set": {"status": "failed"}}
                     )
                     video["status"] = "failed"
+                    logging.info(f"Video marked as failed")
         
         if isinstance(video['created_at'], str):
             video['created_at'] = datetime.fromisoformat(video['created_at'])
