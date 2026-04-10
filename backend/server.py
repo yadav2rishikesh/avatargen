@@ -16,6 +16,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai import OpenAITextToSpeech
 import httpx
 import base64
+import io
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -172,6 +173,48 @@ class ChatResponse(BaseModel):
 
 class UpdateCreditsRequest(BaseModel):
     credits: int
+
+class ElevenLabsVoicesRequest(BaseModel):
+    elevenlabs_api_key: str
+
+class ElevenLabsPreviewRequest(BaseModel):
+    elevenlabs_api_key: str
+    elevenlabs_voice_id: str
+    script: str
+    model_id: str = "eleven_multilingual_v2"
+    stability: float = 0.5
+    similarity_boost: float = 0.75
+
+class VideoCreateAdvanced(BaseModel):
+    # Core fields (same structure as VideoCreate)
+    avatar_id: str
+    avatar_name: str
+    title: str
+    script: str
+    language: str
+    duration: int
+    folder_id: Optional[str] = None
+    # Voice mode selection
+    voice_mode: str = "heygen"
+    # "heygen"      = use HeyGen voice (with optional Method A EL)
+    # "elevenlabs"  = direct ElevenLabs API (Method B)
+    # HeyGen voice fields (voice_mode = "heygen")
+    heygen_voice_id: Optional[str] = None
+    use_el_in_heygen: bool = False        # True = imported EL voice in HeyGen
+    el_heygen_model: str = "eleven_multilingual_v2"
+    el_heygen_stability: float = 0.5     # will be quantized to 0, 0.5, or 1.0
+    # Direct ElevenLabs fields (voice_mode = "elevenlabs")
+    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_voice_id: Optional[str] = None
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    el_stability: float = 0.5
+    el_similarity_boost: float = 0.75
+    # Avatar engine
+    avatar_engine: str = "standard"       # "standard" | "avatar_iv" | "avatar_v"
+    # Output
+    width: int = 1920
+    height: int = 1080
+    enable_captions: bool = False
 
 # ============= AUTH HELPERS =============
 
@@ -687,6 +730,318 @@ async def get_all_folders(current_user: dict = Depends(require_admin)):
             folder['created_at'] = datetime.fromisoformat(folder['created_at'])
     
     return [FolderResponse(**folder) for folder in folders]
+
+# ============= HELPER FUNCTION FOR ELEVENLABS =============
+
+async def _elevenlabs_to_heygen_asset(
+    el_api_key: str,
+    el_voice_id: str,
+    script: str,
+    model_id: str = "eleven_multilingual_v2",
+    stability: float = 0.5,
+    similarity_boost: float = 0.75
+) -> str:
+    """
+    Calls ElevenLabs TTS → uploads MP3 to HeyGen → returns audio_asset_id
+    """
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # 1. Generate audio from ElevenLabs
+        el_resp = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{el_voice_id}",
+            headers={
+                "xi-api-key": el_api_key,
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json"
+            },
+            json={
+                "text": script,
+                "model_id": model_id,
+                "voice_settings": {
+                    "stability": stability,
+                    "similarity_boost": similarity_boost,
+                    "style": 0.0,
+                    "use_speaker_boost": True
+                }
+            }
+        )
+        if el_resp.status_code == 401:
+            raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
+        el_resp.raise_for_status()
+
+        # 2. Upload MP3 to HeyGen
+        hg_resp = await client.post(
+            "https://api.heygen.com/v1/asset",
+            headers={"X-Api-Key": HEYGEN_API_KEY},
+            files={"file": ("audio.mp3", io.BytesIO(el_resp.content), "audio/mpeg")}
+        )
+        hg_resp.raise_for_status()
+        asset_id = hg_resp.json().get("data", {}).get("asset_id")
+        if not asset_id:
+            raise ValueError(f"HeyGen asset upload failed: {hg_resp.json()}")
+        return asset_id
+
+# ============= NEW AVATAR V + ELEVENLABS ROUTES =============
+
+@api_router.get("/heygen/voices")
+async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
+    """Fetch all HeyGen voices including any imported ElevenLabs voices."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://api.heygen.com/v2/voices",
+                headers={"X-Api-Key": HEYGEN_API_KEY}
+            )
+            resp.raise_for_status()
+            voices = resp.json().get("data", {}).get("voices", [])
+            return {"voices": voices, "count": len(voices)}
+    except Exception as e:
+        logging.error(f"HeyGen voices error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/elevenlabs/voices")
+async def get_elevenlabs_voices(
+    data: ElevenLabsVoicesRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Fetch user's ElevenLabs voices. API key only used for this request, never stored."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": data.elevenlabs_api_key}
+            )
+            if resp.status_code == 401:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid ElevenLabs API key. Get yours at elevenlabs.io"
+                )
+            resp.raise_for_status()
+            raw = resp.json().get("voices", [])
+            voices = [
+                {
+                    "voice_id": v.get("voice_id"),
+                    "name": v.get("name"),
+                    "category": v.get("category", ""),
+                    "preview_url": v.get("preview_url"),
+                    "labels": v.get("labels", {}),
+                }
+                for v in raw
+            ]
+            return {"voices": voices, "count": len(voices)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ElevenLabs voices error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/elevenlabs/preview")
+async def elevenlabs_preview(
+    data: ElevenLabsPreviewRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Generate ElevenLabs voice preview using first 500 chars. Returns base64 MP3."""
+    try:
+        text = data.script[:500] if data.script.strip() else "Hello, this is a voice preview."
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{data.elevenlabs_voice_id}",
+                headers={
+                    "xi-api-key": data.elevenlabs_api_key,
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": text,
+                    "model_id": data.model_id,
+                    "voice_settings": {
+                        "stability": data.stability,
+                        "similarity_boost": data.similarity_boost,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                }
+            )
+            if resp.status_code == 401:
+                raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
+            resp.raise_for_status()
+            return {
+                "audio_base64": base64.b64encode(resp.content).decode("utf-8")
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ElevenLabs preview error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/videos/generate-advanced", response_model=VideoResponse)
+async def generate_video_advanced(
+    data: VideoCreateAdvanced,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Advanced video generation:
+    - Avatar V (use_avatar_v_model: true) — HeyGen April 8 2026
+    - Avatar IV (use_avatar_iv_model: true)
+    - ElevenLabs Method A: HeyGen-native (elevanlabs_settings)
+    - ElevenLabs Method B: Direct API → upload → audio_asset_id
+    - 1080p default, captions optional
+    Stored in db.videos → auto appears in HistoryPage, status polling works
+    """
+    video = None
+    try:
+        # Credit check
+        if current_user["credits"] < 1:
+            raise HTTPException(status_code=400, detail="Insufficient credits")
+
+        # Validate ElevenLabs direct mode inputs
+        if data.voice_mode == "elevenlabs":
+            if not data.elevenlabs_api_key:
+                raise HTTPException(status_code=400, detail="ElevenLabs API key required")
+            if not data.elevenlabs_voice_id:
+                raise HTTPException(status_code=400, detail="ElevenLabs voice ID required")
+
+        # Create DB record (same pattern as existing generate route)
+        video = Video(
+            user_id=current_user["id"],
+            avatar_id=data.avatar_id,
+            avatar_name=data.avatar_name,
+            title=data.title,
+            script=data.script,
+            language=data.language,
+            duration=data.duration,
+            folder_id=data.folder_id,
+            status="generating"
+        )
+        doc = video.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        await db.videos.insert_one(doc)
+
+        # Build voice block
+        if data.voice_mode == "elevenlabs":
+            # Method B: Direct ElevenLabs → upload to HeyGen → use asset
+            asset_id = await _elevenlabs_to_heygen_asset(
+                el_api_key=data.elevenlabs_api_key,
+                el_voice_id=data.elevenlabs_voice_id,
+                script=data.script,
+                model_id=data.elevenlabs_model_id,
+                stability=data.el_stability,
+                similarity_boost=data.el_similarity_boost
+            )
+            voice_block = {
+                "type": "audio",
+                "audio_asset_id": asset_id
+            }
+        elif data.voice_mode == "heygen" and data.use_el_in_heygen and data.heygen_voice_id:
+            # Method A: HeyGen-native ElevenLabs voice
+            # Quantize stability — only 0, 0.5, 1.0 allowed
+            allowed = [0.0, 0.5, 1.0]
+            stab = min(allowed, key=lambda x: abs(x - data.el_heygen_stability))
+            voice_block = {
+                "type": "text",
+                "input_text": data.script,
+                "voice_id": data.heygen_voice_id,
+                "speed": 1.0,
+                "elevanlabs_settings": {
+                    "model": data.el_heygen_model,
+                    "stability": stab
+                }
+            }
+        elif data.heygen_voice_id:
+            # Standard HeyGen voice
+            voice_block = {
+                "type": "text",
+                "input_text": data.script,
+                "voice_id": data.heygen_voice_id,
+                "speed": 1.0
+            }
+        else:
+            # Default fallback voice
+            voice_block = {
+                "type": "text",
+                "input_text": data.script,
+                "voice_id": "1bd001e7e50f421d891986aad5158bc8",
+                "speed": 1.0
+            }
+
+        # Build character block
+        character_block = {
+            "type": "avatar",
+            "avatar_id": data.avatar_id,
+            "avatar_style": "normal"
+        }
+        if data.avatar_engine == "avatar_v":
+            character_block["use_avatar_v_model"] = True
+        elif data.avatar_engine == "avatar_iv":
+            character_block["use_avatar_iv_model"] = True
+
+        # Build full HeyGen payload
+        payload = {
+            "video_inputs": [{
+                "character": character_block,
+                "voice": voice_block,
+                "background": {"type": "color", "value": "#ffffff"}
+            }],
+            "dimension": {"width": data.width, "height": data.height},
+            "caption": data.enable_captions,
+            "test": False
+        }
+
+        # Call HeyGen API
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            hg = await client.post(
+                "https://api.heygen.com/v2/video/generate",
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+            hg.raise_for_status()
+            heygen_video_id = hg.json().get("data", {}).get("video_id")
+
+        # Store HeyGen video ID (same pattern as existing route)
+        await db.videos.update_one(
+            {"id": video.id},
+            {"$set": {"heygen_video_id": heygen_video_id}}
+        )
+
+        # Deduct 1 credit (same pattern as existing route)
+        await db.users.update_one(
+            {"id": current_user["id"]},
+            {"$inc": {"credits": -1}}
+        )
+
+        if isinstance(video.created_at, str):
+            video.created_at = datetime.fromisoformat(video.created_at)
+
+        return VideoResponse(**video.model_dump())
+
+    except HTTPException:
+        if video:
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
+        raise
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HeyGen error: {e.response.text}")
+        if video:
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Video generation failed: {e.response.text}"
+        )
+    except Exception as e:
+        logging.error(f"Advanced generate error: {e}")
+        if video:
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Include the router in the main app
 app.include_router(api_router)
