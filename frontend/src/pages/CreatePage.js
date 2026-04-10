@@ -10,7 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
-import { Slider } from '../components/ui/slider';
 import { toast } from 'sonner';
 import { Sparkles, Upload, RefreshCw, Play, Video as VideoIcon, Loader2, Mic, Zap, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -36,24 +35,13 @@ export default function CreatePage() {
   const [audioPreview, setAudioPreview] = useState(null);
   const [generating, setGenerating] = useState(false);
 
-  // Voice section
-  const [voiceTab, setVoiceTab] = useState('heygen');
-  // HeyGen voices (Method A)
+  // Voice section - HeyGen only
   const [heygenVoices, setHeygenVoices] = useState([]);
   const [selectedHGVoice, setSelectedHGVoice] = useState(null);
   const [loadingHGVoices, setLoadingHGVoices] = useState(false);
   const [isELInHG, setIsELInHG] = useState(false);
   const [elHGModel, setElHGModel] = useState('eleven_multilingual_v2');
   const [elHGStability, setElHGStability] = useState(0.5);
-  // ElevenLabs direct (Method B)
-  const [elApiKey, setElApiKey] = useState('');
-  const [elKeyVerified, setElKeyVerified] = useState(false);
-  const [elVoices, setElVoices] = useState([]);
-  const [selectedELVoice, setSelectedELVoice] = useState(null);
-  const [elModel, setElModel] = useState('eleven_multilingual_v2');
-  const [elStability, setElStability] = useState(0.5);
-  const [elSimilarity, setElSimilarity] = useState(0.75);
-  const [loadingELVoices, setLoadingELVoices] = useState(false);
   // Avatar engine
   const [avatarEngine, setAvatarEngine] = useState('standard');
   // Advanced options
@@ -126,29 +114,7 @@ export default function CreatePage() {
   const handleVoicePreview = async () => {
     if (!script.trim()) { toast.error('Please enter a script first'); return; }
 
-    if (voiceTab === 'elevenlabs') {
-      if (!selectedELVoice) { toast.error('Select an ElevenLabs voice first'); return; }
-      setLoading(true);
-      try {
-        const res = await axios.post(`${API_URL}/elevenlabs/preview`, {
-          elevenlabs_api_key: elApiKey,
-          elevenlabs_voice_id: selectedELVoice.voice_id,
-          script,
-          model_id: elModel,
-          stability: elStability,
-          similarity_boost: elSimilarity,
-        });
-        setAudioPreview(res.data.audio_base64);
-        toast.success('ElevenLabs voice preview ready!');
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Preview failed');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    // Original HeyGen preview — exactly as before
+    // HeyGen voice preview using OpenAI TTS
     setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/voice/preview`, { script, language });
@@ -211,31 +177,11 @@ export default function CreatePage() {
     }
   };
 
-  const handleLoadELVoices = async () => {
-    if (!elApiKey.trim()) { toast.error('Enter your ElevenLabs API key'); return; }
-    setLoadingELVoices(true);
-    try {
-      const res = await axios.post(`${API_URL}/elevenlabs/voices`, {
-        elevenlabs_api_key: elApiKey
-      });
-      setElVoices(res.data.voices);
-      setElKeyVerified(true);
-      toast.success(`${res.data.count} ElevenLabs voices loaded!`);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Check your ElevenLabs API key');
-      setElKeyVerified(false);
-    } finally {
-      setLoadingELVoices(false);
-    }
-  };
-
   const handleGenerateAdvanced = async () => {
     if (!script.trim()) { toast.error('Please enter a script'); return; }
     if (!title.trim()) { toast.error('Please enter a title'); return; }
     if (user.credits < 1) { toast.error('Insufficient credits'); return; }
-    if (voiceTab === 'elevenlabs' && !selectedELVoice) {
-      toast.error('Please select an ElevenLabs voice'); return;
-    }
+    
     const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
     setGeneratingAdvanced(true);
     try {
@@ -247,16 +193,11 @@ export default function CreatePage() {
         language,
         duration: parseInt(duration),
         folder_id: null,
-        voice_mode: voiceTab === 'elevenlabs' ? 'elevenlabs' : 'heygen',
+        voice_mode: 'heygen',
         heygen_voice_id: selectedHGVoice?.voice_id || null,
         use_el_in_heygen: isELInHG,
         el_heygen_model: elHGModel,
         el_heygen_stability: elHGStability,
-        elevenlabs_api_key: voiceTab === 'elevenlabs' ? elApiKey : null,
-        elevenlabs_voice_id: voiceTab === 'elevenlabs' ? selectedELVoice?.voice_id : null,
-        elevenlabs_model_id: elModel,
-        el_stability: elStability,
-        el_similarity_boost: elSimilarity,
         avatar_engine: avatarEngine,
         width: w,
         height: h,
@@ -547,225 +488,93 @@ export default function CreatePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setVoiceTab('heygen')}
-                    className={`p-3 rounded-lg border-2 text-left transition-all ${
-                      voiceTab === 'heygen'
-                        ? 'border-primary bg-primary/5'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
+                <div className="space-y-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadHGVoices}
+                    disabled={loadingHGVoices}
+                    className="w-full gap-2"
                   >
-                    <p className="text-sm font-semibold text-slate-900">HeyGen Voice</p>
-                    <p className="text-xs text-slate-500 mt-0.5">Built-in AI voices</p>
-                  </button>
-                  <button
-                    onClick={() => setVoiceTab('elevenlabs')}
-                    className={`p-3 rounded-lg border-2 text-left transition-all ${
-                      voiceTab === 'elevenlabs'
-                        ? 'border-amber-500 bg-amber-50'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-slate-900">ElevenLabs</p>
-                    <p className="text-xs text-slate-500 mt-0.5">Premium realistic voices</p>
-                  </button>
+                    {loadingHGVoices
+                      ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
+                      : 'Load HeyGen Voices'}
+                  </Button>
+
+                  {heygenVoices.length > 0 && (
+                    <>
+                      <Select
+                        value={selectedHGVoice?.voice_id || ''}
+                        onValueChange={(id) => setSelectedHGVoice(heygenVoices.find(v => v.voice_id === id) || null)}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Select a HeyGen voice..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-52">
+                          {heygenVoices.map(v => (
+                            <SelectItem key={v.voice_id} value={v.voice_id}>
+                              {v.name}
+                              {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {selectedHGVoice?.preview_audio && (
+                        <div className="bg-slate-50 rounded-lg p-2">
+                          <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
+                          <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">This is an ElevenLabs voice</p>
+                          <p className="text-xs text-slate-500">Enable if this voice was imported from ElevenLabs</p>
+                        </div>
+                        <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
+                      </div>
+
+                      {isELInHG && (
+                        <div className="space-y-3 pl-2 border-l-2 border-amber-200">
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
+                            <Select value={elHGModel} onValueChange={setElHGModel}>
+                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2</SelectItem>
+                                <SelectItem value="eleven_v3">eleven_v3</SelectItem>
+                                <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5</SelectItem>
+                                <SelectItem value="eleven_turbo_v2">eleven_turbo_v2</SelectItem>
+                                <SelectItem value="eleven_monolingual_v1">eleven_monolingual_v1</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-600">
+                              Stability: {elHGStability === 0 ? '0' : elHGStability === 1.0 ? '1.0' : '0.5'}
+                            </Label>
+                            <div className="flex gap-2">
+                              {[0, 0.5, 1.0].map(v => (
+                                <button
+                                  key={v}
+                                  onClick={() => setElHGStability(v)}
+                                  className={`flex-1 py-1.5 text-xs rounded border transition-all ${
+                                    elHGStability === v
+                                      ? 'border-primary bg-primary/5 text-primary font-semibold'
+                                      : 'border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  {v}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-
-                {voiceTab === 'heygen' && (
-                  <div className="space-y-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleLoadHGVoices}
-                      disabled={loadingHGVoices}
-                      className="w-full gap-2"
-                    >
-                      {loadingHGVoices
-                        ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
-                        : 'Load HeyGen Voices'}
-                    </Button>
-
-                    {heygenVoices.length > 0 && (
-                      <>
-                        <Select
-                          value={selectedHGVoice?.voice_id || ''}
-                          onValueChange={(id) => setSelectedHGVoice(heygenVoices.find(v => v.voice_id === id) || null)}
-                        >
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Select a HeyGen voice..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-52">
-                            {heygenVoices.map(v => (
-                              <SelectItem key={v.voice_id} value={v.voice_id}>
-                                {v.name}
-                                {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-
-                        {selectedHGVoice?.preview_audio && (
-                          <div className="bg-slate-50 rounded-lg p-2">
-                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
-                            <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between pt-1">
-                          <div>
-                            <p className="text-sm font-medium text-slate-900">ElevenLabs voice?</p>
-                            <p className="text-xs text-slate-500">Enable if this voice was imported from ElevenLabs</p>
-                          </div>
-                          <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
-                        </div>
-
-                        {isELInHG && (
-                          <div className="space-y-3 pl-2 border-l-2 border-amber-200">
-                            <div className="space-y-1">
-                              <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
-                              <Select value={elHGModel} onValueChange={setElHGModel}>
-                                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="eleven_multilingual_v2">Multilingual v2 — Best quality</SelectItem>
-                                  <SelectItem value="eleven_v3">v3 — Latest</SelectItem>
-                                  <SelectItem value="eleven_turbo_v2_5">Turbo v2.5 — Fastest</SelectItem>
-                                  <SelectItem value="eleven_turbo_v2">Turbo v2 — Fast</SelectItem>
-                                  <SelectItem value="eleven_monolingual_v1">Monolingual v1 — English only</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs text-slate-600">
-                                Stability: {elHGStability === 0 ? '0 (expressive)' : elHGStability === 1.0 ? '1.0 (stable)' : '0.5 (balanced)'}
-                              </Label>
-                              <div className="flex gap-2">
-                                {[0, 0.5, 1.0].map(v => (
-                                  <button
-                                    key={v}
-                                    onClick={() => setElHGStability(v)}
-                                    className={`flex-1 py-1.5 text-xs rounded border transition-all ${
-                                      elHGStability === v
-                                        ? 'border-primary bg-primary/5 text-primary font-semibold'
-                                        : 'border-slate-200 text-slate-600'
-                                    }`}
-                                  >
-                                    {v}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {voiceTab === 'elevenlabs' && (
-                  <div className="space-y-3">
-                    {!elKeyVerified ? (
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-600">Your ElevenLabs API Key</Label>
-                        <div className="flex gap-2">
-                          <Input
-                            type="password"
-                            placeholder="sk_..."
-                            value={elApiKey}
-                            onChange={e => setElApiKey(e.target.value)}
-                            className="h-9 text-sm flex-1"
-                            onKeyDown={e => e.key === 'Enter' && handleLoadELVoices()}
-                          />
-                          <Button
-                            size="sm"
-                            onClick={handleLoadELVoices}
-                            disabled={loadingELVoices || !elApiKey.trim()}
-                          >
-                            {loadingELVoices ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Load'}
-                          </Button>
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          Get key: elevenlabs.io → Profile → API Keys
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-green-600 font-medium">✓ {elVoices.length} voices loaded</span>
-                        <button
-                          onClick={() => { setElKeyVerified(false); setElVoices([]); setSelectedELVoice(null); }}
-                          className="text-xs text-primary underline"
-                        >
-                          Change key
-                        </button>
-                      </div>
-                    )}
-
-                    {elVoices.length > 0 && (
-                      <>
-                        <Select
-                          value={selectedELVoice?.voice_id || ''}
-                          onValueChange={id => setSelectedELVoice(elVoices.find(v => v.voice_id === id) || null)}
-                        >
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Select an ElevenLabs voice..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-52">
-                            {elVoices.map(v => (
-                              <SelectItem key={v.voice_id} value={v.voice_id}>
-                                <span className="font-medium">{v.name}</span>
-                                {v.labels?.accent
-                                  ? <span className="text-xs text-slate-400 ml-1">· {v.labels.accent}</span>
-                                  : null}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-
-                        {selectedELVoice?.preview_url && (
-                          <div className="bg-slate-50 rounded-lg p-2">
-                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
-                            <audio controls src={selectedELVoice.preview_url} className="w-full h-8" />
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <Label className="text-xs text-slate-600">Model</Label>
-                          <Select value={elModel} onValueChange={setElModel}>
-                            <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="eleven_multilingual_v2">Multilingual v2 — Best quality</SelectItem>
-                              <SelectItem value="eleven_v3">v3 — Latest & most expressive</SelectItem>
-                              <SelectItem value="eleven_turbo_v2_5">Turbo v2.5 — Fastest</SelectItem>
-                              <SelectItem value="eleven_turbo_v2">Turbo v2 — Fast</SelectItem>
-                              <SelectItem value="eleven_monolingual_v1">Monolingual v1 — English only</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">Stability: {elStability.toFixed(2)}</Label>
-                            <Slider
-                              min={0} max={1} step={0.05}
-                              value={[elStability]}
-                              onValueChange={([v]) => setElStability(v)}
-                            />
-                            <p className="text-xs text-slate-400">Higher = more consistent</p>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">Clarity: {elSimilarity.toFixed(2)}</Label>
-                            <Slider
-                              min={0} max={1} step={0.05}
-                              value={[elSimilarity]}
-                              onValueChange={([v]) => setElSimilarity(v)}
-                            />
-                            <p className="text-xs text-slate-400">Higher = closer to original</p>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
               </CardContent>
             </Card>
 
@@ -900,10 +709,8 @@ export default function CreatePage() {
               <CardContent className="pt-6 space-y-4">
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="outline" className="text-xs">
-                    {voiceTab === 'elevenlabs' && selectedELVoice
-                      ? `🎙 ElevenLabs: ${selectedELVoice.name}`
-                      : selectedHGVoice
-                      ? `🔊 HeyGen: ${selectedHGVoice.name}`
+                    {selectedHGVoice
+                      ? `🔊 ${selectedHGVoice.name}`
                       : '🔊 HeyGen Default'}
                   </Badge>
                   {avatarEngine === 'avatar_v' && (
