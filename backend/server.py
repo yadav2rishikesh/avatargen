@@ -801,7 +801,7 @@ async def _elevenlabs_to_heygen_asset(
         logging.info(f"HeyGen asset upload status: {hg_resp.status_code}")
         logging.info(f"HeyGen asset response: {hg_resp.text}")
         hg_resp.raise_for_status()
-        asset_id = hg_resp.json().get("data", {}).get("asset_id")
+        asset_id = hg_resp.json().get("data", {}).get("id")
         if not asset_id:
             raise ValueError(f"HeyGen asset upload failed: {hg_resp.json()}")
         return asset_id
