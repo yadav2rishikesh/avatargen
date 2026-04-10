@@ -143,8 +143,9 @@ export default function CreatePage() {
         const res = await axios.post(
           `${API_URL}/voice/script-preview`,
           {
+            heygen_voice_name: selectedHGVoice.name,
             script: script,
-            heygen_voice_name: selectedHGVoice.name
+            model_id: elHGModel || 'eleven_multilingual_v2'
           }
         );
         if (res.data.audio_base64) {
