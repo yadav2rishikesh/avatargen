@@ -1249,3 +1249,53 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+# ============= AUTO STATUS POLLING =============
+
+import asyncio as _asyncio
+
+async def _poll_heygen_videos():
+    """Background task: checks HeyGen status every 30s and updates MongoDB automatically."""
+    await _asyncio.sleep(10)  # wait for server to start
+    while True:
+        try:
+            videos = await db.videos.find(
+                {'status': 'generating', 'heygen_video_id': {'$exists': True, '$ne': None}},
+                {'_id': 0, 'id': 1, 'heygen_video_id': 1, 'created_at': 1}
+            ).to_list(20)
+
+            for video in videos:
+                hg_id = video.get('heygen_video_id')
+                if not hg_id:
+                    continue
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as hc:
+                        resp = await hc.get(
+                            f"https://api.heygen.com/v1/video_status.get?video_id={hg_id}",
+                            headers={"X-Api-Key": HEYGEN_API_KEY}
+                        )
+                        data = resp.json().get('data', {})
+                        status = data.get('status')
+                        video_url = data.get('video_url')
+                        thumbnail_url = data.get('thumbnail_url')
+
+                        if status == 'completed' and video_url:
+                            await db.videos.update_one(
+                                {'heygen_video_id': hg_id},
+                                {'$set': {'status': 'completed', 'video_url': video_url, 'thumbnail_url': thumbnail_url}}
+                            )
+                            logging.info(f"Auto-poll: {hg_id} → completed ✅")
+                        elif status == 'failed':
+                            await db.videos.update_one(
+                                {'heygen_video_id': hg_id},
+                                {'$set': {'status': 'failed'}}
+                            )
+                            logging.info(f"Auto-poll: {hg_id} → failed ❌")
+                except Exception as e:
+                    logging.error(f"Poll error for {hg_id}: {e}")
+        except Exception as e:
+            logging.error(f"Auto-poll loop error: {e}")
+        await _asyncio.sleep(30)
+
+@app.on_event("startup")
+async def start_polling():
+    _asyncio.create_task(_poll_heygen_videos())

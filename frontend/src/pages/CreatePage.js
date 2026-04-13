@@ -16,6 +16,7 @@ import { Sparkles, Upload, RefreshCw, Play, Video as VideoIcon, Loader2, Mic, Za
 import { useAuth } from '../contexts/AuthContext';
 
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const EL_API_KEY = 'sk_cfa652388dad22ed13e0d36de0a31b235e34a91a2dbd21c8';
 
 export default function CreatePage() {
   const location = useLocation();
@@ -29,7 +30,7 @@ export default function CreatePage() {
   const [enhanceScript, setEnhanceScript] = useState(false);
   const [tone, setTone] = useState('Professional');
   const [duration, setDuration] = useState('30');
-  const [language, setLanguage] = useState('English');
+  const [language, setLanguage] = useState('HINDI');
   const [title, setTitle] = useState('');
   
   const [loading, setLoading] = useState(false);
@@ -37,7 +38,7 @@ export default function CreatePage() {
   const [generating, setGenerating] = useState(false);
 
   // Voice section
-  const [voiceTab, setVoiceTab] = useState('heygen');
+  const [voiceTab, setVoiceTab] = useState('elevenlabs');
   // HeyGen voices
   const [heygenVoices, setHeygenVoices] = useState([]);
   const [heygenGenderFilter, setHeygenGenderFilter] = useState('all');
@@ -52,6 +53,7 @@ export default function CreatePage() {
   const [elKeyVerified, setElKeyVerified] = useState(false);
   const [elVoices, setElVoices] = useState([]);
   const [elLangFilter, setElLangFilter] = useState('all');
+  const [elSearchTerm, setElSearchTerm] = useState('');
   const [selectedELVoice, setSelectedELVoice] = useState(null);
   const [elModel, setElModel] = useState('eleven_multilingual_v2');
   const [elStability, setElStability] = useState(0.5);
@@ -77,7 +79,6 @@ export default function CreatePage() {
       toast.error('Please enter a prompt');
       return;
     }
-    
     setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/scripts/generate`, { prompt });
@@ -95,7 +96,6 @@ export default function CreatePage() {
       toast.error('Please enter a script first');
       return;
     }
-    
     setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/scripts/enhance`, { script });
@@ -113,7 +113,6 @@ export default function CreatePage() {
       toast.error('Please enter a script first');
       return;
     }
-    
     setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/scripts/rewrite`, { script, tone });
@@ -131,37 +130,57 @@ export default function CreatePage() {
       toast.error('Please enter your script first');
       return;
     }
+
+    // ElevenLabs direct tab preview
+    if (voiceTab === 'elevenlabs') {
+      if (!selectedELVoice) {
+        toast.error('Please select an ElevenLabs voice first');
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await axios.post(`${API_URL}/elevenlabs/preview`, {
+          elevenlabs_api_key: EL_API_KEY,
+          elevenlabs_voice_id: selectedELVoice.voice_id,
+          script: script,
+          model_id: elModel,
+          stability: elStability,
+          similarity_boost: elSimilarity,
+        });
+        if (res.data.audio_base64) {
+          setAudioPreview(res.data.audio_base64);
+          toast.success(`Playing script with ElevenLabs voice: ${selectedELVoice.name}`);
+        }
+      } catch (err) {
+        toast.error(err.response?.data?.detail || 'Preview failed');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // HeyGen tab preview
     if (!selectedHGVoice) {
       toast.error('Please select a voice first');
       return;
     }
-
     setLoading(true);
     try {
-      // If ElevenLabs toggle is ON, use the new script-preview endpoint
       if (isELInHG && selectedHGVoice?.name) {
-        const res = await axios.post(
-          `${API_URL}/voice/script-preview`,
-          {
-            heygen_voice_name: selectedHGVoice.name,
-            script: script,
-            model_id: elHGModel || 'eleven_multilingual_v2'
-          }
-        );
+        const res = await axios.post(`${API_URL}/voice/script-preview`, {
+          heygen_voice_name: selectedHGVoice.name,
+          script: script,
+          model_id: elHGModel || 'eleven_multilingual_v2'
+        });
         if (res.data.audio_base64) {
           setAudioPreview(res.data.audio_base64);
           toast.success(`Playing script with ElevenLabs voice: ${res.data.matched_voice_name || selectedHGVoice.name}`);
         }
       } else {
-        // Use HeyGen native TTS preview
-        const res = await axios.post(
-          `${API_URL}/heygen/tts-preview`,
-          {
-            voice_id: selectedHGVoice.voice_id,
-            script: script
-          }
-        );
-
+        const res = await axios.post(`${API_URL}/heygen/tts-preview`, {
+          voice_id: selectedHGVoice.voice_id,
+          script: script
+        });
         if (res.data.audio_url) {
           const audio = new Audio(res.data.audio_url);
           audio.play();
@@ -172,14 +191,12 @@ export default function CreatePage() {
         }
       }
     } catch (err) {
-      // Fallback: play native voice sample from HeyGen
       if (selectedHGVoice?.preview_audio) {
         const audio = new Audio(selectedHGVoice.preview_audio);
         audio.play();
         toast.success('Playing voice sample for selected voice');
       } else {
-        const detail = err.response?.data?.detail || 'Preview failed. Please try again.';
-        toast.error(detail);
+        toast.error(err.response?.data?.detail || 'Preview failed. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -191,17 +208,14 @@ export default function CreatePage() {
       toast.error('Please enter a script');
       return;
     }
-    
     if (!title.trim()) {
       toast.error('Please enter a title for your video');
       return;
     }
-
     if (user.credits < 1) {
       toast.error('Insufficient credits');
       return;
     }
-    
     setGenerating(true);
     try {
       const response = await axios.post(`${API_URL}/videos/generate`, {
@@ -212,7 +226,6 @@ export default function CreatePage() {
         language,
         duration: parseInt(duration),
       });
-      
       updateUserCredits(user.credits - 1);
       toast.success('Video generation started! Check History for status.');
       navigate('/dashboard/history');
@@ -237,24 +250,16 @@ export default function CreatePage() {
   };
 
   const handleLoadELVoices = async () => {
-    if (!elApiKey.trim()) {
-      toast.error('Enter your ElevenLabs API key');
-      return;
-    }
     setLoadingELVoices(true);
     try {
       const res = await axios.post(`${API_URL}/elevenlabs/voices`, {
-        elevenlabs_api_key: elApiKey
+        elevenlabs_api_key: EL_API_KEY
       });
       setElVoices(res.data.voices);
       setElKeyVerified(true);
       toast.success(`${res.data.count} ElevenLabs voices loaded!`);
     } catch (err) {
-      if (err.response?.status === 400) {
-        toast.error('Invalid ElevenLabs API key');
-      } else {
-        toast.error(err.response?.data?.detail || 'Failed to load voices');
-      }
+      toast.error(err.response?.data?.detail || 'Failed to load ElevenLabs voices');
       setElKeyVerified(false);
     } finally {
       setLoadingELVoices(false);
@@ -265,11 +270,17 @@ export default function CreatePage() {
     if (!script.trim()) { toast.error('Please enter a script'); return; }
     if (!title.trim()) { toast.error('Please enter a title'); return; }
     if (user.credits < 1) { toast.error('Insufficient credits'); return; }
-    
+
+    // Validate ElevenLabs tab
+    if (voiceTab === 'elevenlabs' && !selectedELVoice) {
+      toast.error('Please select an ElevenLabs voice');
+      return;
+    }
+
     const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720];
     setGeneratingAdvanced(true);
     try {
-      const payload = {
+      let payload = {
         avatar_id: avatar.avatar_id,
         avatar_name: avatar.display_name || avatar.avatar_name,
         title,
@@ -281,13 +292,31 @@ export default function CreatePage() {
         width: w,
         height: h,
         enable_captions: enableCaptions,
-        voice_mode: 'heygen',
-        heygen_voice_id: selectedHGVoice?.voice_id || null,
-        heygen_voice_name: selectedHGVoice?.name || null,
-        use_el_in_heygen: isELInHG,
-        el_heygen_model: elHGModel,
-        el_heygen_stability: elHGStability,
       };
+
+      if (voiceTab === 'elevenlabs') {
+        // Direct ElevenLabs → upload → HeyGen lip-sync
+        payload = {
+          ...payload,
+          voice_mode: 'elevenlabs',
+          elevenlabs_api_key: EL_API_KEY,
+          elevenlabs_voice_id: selectedELVoice.voice_id,
+          elevenlabs_model_id: elModel,
+          el_stability: elStability,
+          el_similarity_boost: elSimilarity,
+        };
+      } else {
+        // HeyGen voice
+        payload = {
+          ...payload,
+          voice_mode: 'heygen',
+          heygen_voice_id: selectedHGVoice?.voice_id || null,
+          heygen_voice_name: selectedHGVoice?.name || null,
+          use_el_in_heygen: isELInHG,
+          el_heygen_model: elHGModel,
+          el_heygen_stability: elHGStability,
+        };
+      }
 
       console.log("Calling:", `${API_URL}/videos/generate-advanced`);
       await axios.post(`${API_URL}/videos/generate-advanced`, payload);
@@ -300,6 +329,18 @@ export default function CreatePage() {
       setGeneratingAdvanced(false);
     }
   };
+
+  // Filter EL voices
+  const filteredELVoices = elVoices.filter(v => {
+    const matchSearch = elSearchTerm === '' ? true :
+      v.name?.toLowerCase().includes(elSearchTerm.toLowerCase()) ||
+      v.labels?.accent?.toLowerCase().includes(elSearchTerm.toLowerCase());
+    const matchLang = elLangFilter === 'all' ? true :
+      v.labels?.accent?.toLowerCase().includes(elLangFilter) ||
+      v.labels?.language?.toLowerCase().includes(elLangFilter) ||
+      v.name?.toLowerCase().includes(elLangFilter);
+    return matchSearch && matchLang;
+  });
 
   if (!avatar) return null;
 
@@ -361,15 +402,9 @@ export default function CreatePage() {
                       className="w-full gap-2"
                     >
                       {loading ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Generating...
-                        </>
+                        <><Loader2 className="h-4 w-4 animate-spin" />Generating...</>
                       ) : (
-                        <>
-                          <Sparkles className="h-4 w-4" />
-                          Generate Script
-                        </>
+                        <><Sparkles className="h-4 w-4" />Generate Script</>
                       )}
                     </Button>
                   </TabsContent>
@@ -377,28 +412,14 @@ export default function CreatePage() {
                   <TabsContent value="paste" className="space-y-4 mt-4">
                     <div className="flex items-center justify-between">
                       <Label>Enhance with AI</Label>
-                      <Switch
-                        checked={enhanceScript}
-                        onCheckedChange={setEnhanceScript}
-                      />
+                      <Switch checked={enhanceScript} onCheckedChange={setEnhanceScript} />
                     </div>
                     {enhanceScript && (
-                      <Button
-                        onClick={handleEnhanceScript}
-                        disabled={loading}
-                        variant="outline"
-                        className="w-full gap-2"
-                      >
+                      <Button onClick={handleEnhanceScript} disabled={loading} variant="outline" className="w-full gap-2">
                         {loading ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Enhancing...
-                          </>
+                          <><Loader2 className="h-4 w-4 animate-spin" />Enhancing...</>
                         ) : (
-                          <>
-                            <RefreshCw className="h-4 w-4" />
-                            Enhance Script
-                          </>
+                          <><RefreshCw className="h-4 w-4" />Enhance Script</>
                         )}
                       </Button>
                     )}
@@ -408,9 +429,7 @@ export default function CreatePage() {
                     <div className="space-y-2">
                       <Label>Tone</Label>
                       <Select value={tone} onValueChange={setTone}>
-                        <SelectTrigger data-testid="tone-select">
-                          <SelectValue />
-                        </SelectTrigger>
+                        <SelectTrigger data-testid="tone-select"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Emotional">Emotional</SelectItem>
                           <SelectItem value="Energetic">Energetic</SelectItem>
@@ -420,22 +439,11 @@ export default function CreatePage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Button
-                      data-testid="rewrite-script-button"
-                      onClick={handleRewriteScript}
-                      disabled={loading}
-                      className="w-full gap-2"
-                    >
+                    <Button data-testid="rewrite-script-button" onClick={handleRewriteScript} disabled={loading} className="w-full gap-2">
                       {loading ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Rewriting...
-                        </>
+                        <><Loader2 className="h-4 w-4 animate-spin" />Rewriting...</>
                       ) : (
-                        <>
-                          <RefreshCw className="h-4 w-4" />
-                          Rewrite Script
-                        </>
+                        <><RefreshCw className="h-4 w-4" />Rewrite Script</>
                       )}
                     </Button>
                   </TabsContent>
@@ -490,9 +498,7 @@ export default function CreatePage() {
                 <div className="space-y-2">
                   <Label>Duration</Label>
                   <Select value={duration} onValueChange={setDuration}>
-                    <SelectTrigger data-testid="duration-select">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger data-testid="duration-select"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="10">10 seconds</SelectItem>
                       <SelectItem value="20">20 seconds</SelectItem>
@@ -506,9 +512,7 @@ export default function CreatePage() {
                 <div className="space-y-2">
                   <Label>Language</Label>
                   <Select value={language} onValueChange={setLanguage}>
-                    <SelectTrigger data-testid="language-select">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger data-testid="language-select"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="English">English</SelectItem>
                       <SelectItem value="Hindi">Hindi</SelectItem>
@@ -530,15 +534,9 @@ export default function CreatePage() {
                     className="w-full gap-2"
                   >
                     {loading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Generating Preview...
-                      </>
+                      <><Loader2 className="h-4 w-4 animate-spin" />Generating Preview...</>
                     ) : (
-                      <>
-                        <Play className="h-4 w-4" />
-                        Preview Voice
-                      </>
+                      <><Play className="h-4 w-4" />Preview Voice</>
                     )}
                   </Button>
                   
@@ -563,15 +561,9 @@ export default function CreatePage() {
                     className="w-full h-14 text-lg font-semibold bg-secondary hover:bg-secondary/90 text-white shadow-lg shadow-red-900/20 gap-2"
                   >
                     {generating ? (
-                      <>
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        Generating Video...
-                      </>
+                      <><Loader2 className="h-5 w-5 animate-spin" />Generating Video...</>
                     ) : (
-                      <>
-                        <VideoIcon className="h-5 w-5" />
-                        Generate Video (1 Credit)
-                      </>
+                      <><VideoIcon className="h-5 w-5" />Generate Video (1 Credit)</>
                     )}
                   </Button>
                 </div>
@@ -588,151 +580,280 @@ export default function CreatePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleLoadHGVoices}
-                    disabled={loadingHGVoices}
-                    className="w-full gap-2"
+
+                {/* Voice Tab Selector */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setVoiceTab('heygen')}
+                    className={`p-3 rounded-lg border-2 text-left transition-all ${
+                      voiceTab === 'heygen' ? 'border-primary bg-primary/5' : 'border-slate-200 hover:border-slate-300'
+                    }`}
                   >
-                    {loadingHGVoices
-                      ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
-                      : 'Load HeyGen Voices'}
-                  </Button>
+                    <p className="text-sm font-semibold text-slate-900">HeyGen Voice</p>
+                    <p className="text-xs text-slate-500">Built-in AI voices</p>
+                  </button>
+                  <button
+                    onClick={() => setVoiceTab('elevenlabs')}
+                    className={`p-3 rounded-lg border-2 text-left transition-all ${
+                      voiceTab === 'elevenlabs' ? 'border-amber-500 bg-amber-50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold text-slate-900">ElevenLabs 🎙</p>
+                    <p className="text-xs text-slate-500">Indian & Premium voices</p>
+                  </button>
+                </div>
 
-                  {heygenVoices.length > 0 && (
-                    <>
-                      {/* Gender filter */}
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-600">Filter by Gender</Label>
-                        <div className="flex gap-2">
-                          {['all', 'male', 'female'].map(g => (
-                            <button
-                              key={g}
-                              onClick={() => {
-                                setHeygenGenderFilter(g);
-                                setSelectedHGVoice(null);
-                              }}
-                              className={`flex-1 py-1.5 text-xs rounded border transition-all capitalize ${
-                                heygenGenderFilter === g
-                                  ? 'border-primary bg-primary/5 text-primary font-semibold'
-                                  : 'border-slate-200 text-slate-600'
-                              }`}
-                            >
-                              {g}
-                            </button>
-                          ))}
+                {/* HeyGen Tab */}
+                {voiceTab === 'heygen' && (
+                  <div className="space-y-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleLoadHGVoices}
+                      disabled={loadingHGVoices}
+                      className="w-full gap-2"
+                    >
+                      {loadingHGVoices
+                        ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
+                        : 'Load HeyGen Voices'}
+                    </Button>
+
+                    {heygenVoices.length > 0 && (
+                      <>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Filter by Gender</Label>
+                          <div className="flex gap-2">
+                            {['all', 'male', 'female'].map(g => (
+                              <button
+                                key={g}
+                                onClick={() => { setHeygenGenderFilter(g); setSelectedHGVoice(null); }}
+                                className={`flex-1 py-1.5 text-xs rounded border transition-all capitalize ${
+                                  heygenGenderFilter === g
+                                    ? 'border-primary bg-primary/5 text-primary font-semibold'
+                                    : 'border-slate-200 text-slate-600'
+                                }`}
+                              >{g}</button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Search input */}
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-600">Search by Name</Label>
-                        <Input
-                          type="text"
-                          placeholder="Type to search voices..."
-                          value={heygenSearchTerm}
-                          onChange={(e) => {
-                            setHeygenSearchTerm(e.target.value);
-                            setSelectedHGVoice(null);
-                          }}
-                          className="h-9 text-sm"
-                        />
-                      </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Search by Name</Label>
+                          <Input
+                            type="text"
+                            placeholder="Type to search voices..."
+                            value={heygenSearchTerm}
+                            onChange={(e) => { setHeygenSearchTerm(e.target.value); setSelectedHGVoice(null); }}
+                            className="h-9 text-sm"
+                          />
+                        </div>
 
-                      <Select
-                        value={selectedHGVoice?.voice_id || ''}
-                        onValueChange={(id) => {
-                          const filteredHGVoices = heygenVoices
-                            .filter(v => heygenGenderFilter === 'all' ? true : v.gender === heygenGenderFilter)
-                            .filter(v => heygenSearchTerm === '' ? true : 
-                              v.name?.toLowerCase().includes(heygenSearchTerm.toLowerCase()) ||
-                              v.language?.toLowerCase().includes(heygenSearchTerm.toLowerCase())
-                            );
-                          setSelectedHGVoice(filteredHGVoices.find(v => v.voice_id === id) || null);
-                        }}
-                      >
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="Select a HeyGen voice..." />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-52">
-                          {(() => {
-                            const filteredHGVoices = heygenVoices
+                        <Select
+                          value={selectedHGVoice?.voice_id || ''}
+                          onValueChange={(id) => {
+                            const filtered = heygenVoices
                               .filter(v => heygenGenderFilter === 'all' ? true : v.gender === heygenGenderFilter)
-                              .filter(v => heygenSearchTerm === '' ? true : 
+                              .filter(v => heygenSearchTerm === '' ? true :
                                 v.name?.toLowerCase().includes(heygenSearchTerm.toLowerCase()) ||
                                 v.language?.toLowerCase().includes(heygenSearchTerm.toLowerCase())
                               );
-                            return filteredHGVoices.map(v => (
-                              <SelectItem key={v.voice_id} value={v.voice_id}>
-                                {v.name}
-                                {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
-                              </SelectItem>
-                            ));
-                          })()}
-                        </SelectContent>
-                      </Select>
+                            setSelectedHGVoice(filtered.find(v => v.voice_id === id) || null);
+                          }}
+                        >
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue placeholder="Select a HeyGen voice..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-52">
+                            {(() => {
+                              const filtered = heygenVoices
+                                .filter(v => heygenGenderFilter === 'all' ? true : v.gender === heygenGenderFilter)
+                                .filter(v => heygenSearchTerm === '' ? true :
+                                  v.name?.toLowerCase().includes(heygenSearchTerm.toLowerCase()) ||
+                                  v.language?.toLowerCase().includes(heygenSearchTerm.toLowerCase())
+                                );
+                              return filtered.map(v => (
+                                <SelectItem key={v.voice_id} value={v.voice_id}>
+                                  {v.name}
+                                  {v.language ? <span className="text-xs text-slate-400 ml-1">· {v.language}</span> : null}
+                                </SelectItem>
+                              ));
+                            })()}
+                          </SelectContent>
+                        </Select>
 
-                      {selectedHGVoice?.preview_audio && (
-                        <div className="bg-slate-50 rounded-lg p-2">
-                          <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
-                          <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between pt-1">
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">This is an ElevenLabs voice</p>
-                          <p className="text-xs text-slate-500">Enable if this voice was imported from ElevenLabs</p>
-                        </div>
-                        <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
-                      </div>
-
-                      {isELInHG && (
-                        <div className="space-y-3 pl-2 border-l-2 border-amber-200">
-                          <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
-                            <Select value={elHGModel} onValueChange={setElHGModel}>
-                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2</SelectItem>
-                                <SelectItem value="eleven_v3">eleven_v3</SelectItem>
-                                <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5</SelectItem>
-                                <SelectItem value="eleven_turbo_v2">eleven_turbo_v2</SelectItem>
-                                <SelectItem value="eleven_monolingual_v1">eleven_monolingual_v1</SelectItem>
-                              </SelectContent>
-                            </Select>
+                        {selectedHGVoice?.preview_audio && (
+                          <div className="bg-slate-50 rounded-lg p-2">
+                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
+                            <audio controls src={selectedHGVoice.preview_audio} className="w-full h-8" />
                           </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs text-slate-600">
-                              Stability: {elHGStability === 0 ? '0' : elHGStability === 1.0 ? '1.0' : '0.5'}
-                            </Label>
-                            <div className="flex gap-2">
-                              {[0, 0.5, 1.0].map(v => (
-                                <button
-                                  key={v}
-                                  onClick={() => setElHGStability(v)}
-                                  className={`flex-1 py-1.5 text-xs rounded border transition-all ${
-                                    elHGStability === v
-                                      ? 'border-primary bg-primary/5 text-primary font-semibold'
-                                      : 'border-slate-200 text-slate-600'
-                                  }`}
-                                >
-                                  {v}
-                                </button>
-                              ))}
+                        )}
+
+                        <div className="flex items-center justify-between pt-1">
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">This is an ElevenLabs voice</p>
+                            <p className="text-xs text-slate-500">Enable if imported from ElevenLabs</p>
+                          </div>
+                          <Switch checked={isELInHG} onCheckedChange={setIsELInHG} />
+                        </div>
+
+                        {isELInHG && (
+                          <div className="space-y-3 pl-2 border-l-2 border-amber-200">
+                            <div className="space-y-1">
+                              <Label className="text-xs text-slate-600">ElevenLabs Model</Label>
+                              <Select value={elHGModel} onValueChange={setElHGModel}>
+                                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2</SelectItem>
+                                  <SelectItem value="eleven_v3">eleven_v3</SelectItem>
+                                  <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5</SelectItem>
+                                  <SelectItem value="eleven_turbo_v2">eleven_turbo_v2</SelectItem>
+                                  <SelectItem value="eleven_monolingual_v1">eleven_monolingual_v1</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-slate-600">
+                                Stability: {elHGStability === 0 ? '0' : elHGStability === 1.0 ? '1.0' : '0.5'}
+                              </Label>
+                              <div className="flex gap-2">
+                                {[0, 0.5, 1.0].map(v => (
+                                  <button
+                                    key={v}
+                                    onClick={() => setElHGStability(v)}
+                                    className={`flex-1 py-1.5 text-xs rounded border transition-all ${
+                                      elHGStability === v
+                                        ? 'border-primary bg-primary/5 text-primary font-semibold'
+                                        : 'border-slate-200 text-slate-600'
+                                    }`}
+                                  >{v}</button>
+                                ))}
+                              </div>
                             </div>
                           </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ElevenLabs Direct Tab */}
+                {voiceTab === 'elevenlabs' && (
+                  <div className="space-y-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleLoadELVoices}
+                      disabled={loadingELVoices}
+                      className="w-full gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
+                    >
+                      {loadingELVoices
+                        ? <><Loader2 className="h-3 w-3 animate-spin" />Loading...</>
+                        : elKeyVerified ? `✓ ${elVoices.length} voices loaded — Reload` : 'Load ElevenLabs Voices'}
+                    </Button>
+
+                    {elVoices.length > 0 && (
+                      <>
+                        {/* Language filter */}
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Filter by Language</Label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {['all', 'hindi', 'indian', 'tamil', 'telugu', 'english'].map(l => (
+                              <button
+                                key={l}
+                                onClick={() => { setElLangFilter(l); setSelectedELVoice(null); }}
+                                className={`py-1 text-xs rounded border transition-all capitalize ${
+                                  elLangFilter === l
+                                    ? 'border-amber-500 bg-amber-50 text-amber-700 font-semibold'
+                                    : 'border-slate-200 text-slate-600'
+                                }`}
+                              >{l}</button>
+                            ))}
+                          </div>
                         </div>
-                      )}
-                    </>
-                  )}
-                </div>
+
+                        {/* Search */}
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Search by Name</Label>
+                          <Input
+                            type="text"
+                            placeholder="Search voices..."
+                            value={elSearchTerm}
+                            onChange={(e) => { setElSearchTerm(e.target.value); setSelectedELVoice(null); }}
+                            className="h-9 text-sm"
+                          />
+                        </div>
+
+                        {/* Voice dropdown */}
+                        <Select
+                          value={selectedELVoice?.voice_id || ''}
+                          onValueChange={(id) => setSelectedELVoice(filteredELVoices.find(v => v.voice_id === id) || null)}
+                        >
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue placeholder="Select an ElevenLabs voice..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-52">
+                            {filteredELVoices.length === 0 ? (
+                              <SelectItem value="none" disabled>No voices found</SelectItem>
+                            ) : filteredELVoices.map(v => (
+                              <SelectItem key={v.voice_id} value={v.voice_id}>
+                                {v.name}
+                                {v.labels?.accent ? <span className="text-xs text-slate-400 ml-1">· {v.labels.accent}</span> : null}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        {/* Preview URL */}
+                        {selectedELVoice?.preview_url && (
+                          <div className="bg-amber-50 rounded-lg p-2">
+                            <p className="text-xs text-slate-500 mb-1">Voice sample:</p>
+                            <audio controls src={selectedELVoice.preview_url} className="w-full h-8" />
+                          </div>
+                        )}
+
+                        {/* Model */}
+                        <div className="space-y-1">
+                          <Label className="text-xs text-slate-600">Model</Label>
+                          <Select value={elModel} onValueChange={setElModel}>
+                            <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="eleven_multilingual_v2">eleven_multilingual_v2 — Best quality</SelectItem>
+                              <SelectItem value="eleven_v3">eleven_v3 — Latest</SelectItem>
+                              <SelectItem value="eleven_turbo_v2_5">eleven_turbo_v2_5 — Fastest</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Stability & Similarity */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-600">Stability: {elStability.toFixed(2)}</Label>
+                            <input
+                              type="range" min="0" max="1" step="0.05"
+                              value={elStability}
+                              onChange={(e) => setElStability(parseFloat(e.target.value))}
+                              className="w-full"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-slate-600">Clarity: {elSimilarity.toFixed(2)}</Label>
+                            <input
+                              type="range" min="0" max="1" step="0.05"
+                              value={elSimilarity}
+                              onChange={(e) => setElSimilarity(parseFloat(e.target.value))}
+                              className="w-full"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
               </CardContent>
             </Card>
 
-            {/* NEW: Avatar Engine Card */}
+            {/* Avatar Engine Card */}
             <Card className="border-2 border-slate-200">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -747,98 +868,60 @@ export default function CreatePage() {
                     onClick={() => setAvatarEngine(engine)}
                     className={`w-full p-3 rounded-lg border-2 text-left transition-all ${
                       avatarEngine === engine
-                        ? engine === 'avatar_v'
-                          ? 'border-amber-500 bg-amber-50'
-                          : engine === 'avatar_iv'
-                          ? 'border-blue-500 bg-blue-50'
+                        ? engine === 'avatar_v' ? 'border-amber-500 bg-amber-50'
+                          : engine === 'avatar_iv' ? 'border-blue-500 bg-blue-50'
                           : 'border-primary bg-primary/5'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        {engine === 'standard' && (
-                          <>
-                            <p className="text-sm font-semibold text-slate-900">Standard</p>
-                            <p className="text-xs text-slate-500">HeyGen default engine</p>
-                          </>
-                        )}
-                        {engine === 'avatar_iv' && (
-                          <>
-                            <p className="text-sm font-semibold text-slate-900">Avatar IV ⚡</p>
-                            <p className="text-xs text-slate-500">Expressive motion · Natural gestures</p>
-                          </>
-                        )}
+                        {engine === 'standard' && (<><p className="text-sm font-semibold text-slate-900">Standard</p><p className="text-xs text-slate-500">HeyGen default engine</p></>)}
+                        {engine === 'avatar_iv' && (<><p className="text-sm font-semibold text-slate-900">Avatar IV ⚡</p><p className="text-xs text-slate-500">Expressive motion · Natural gestures</p></>)}
                         {engine === 'avatar_v' && (
-                          <div className="flex items-start gap-2">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-semibold text-slate-900">Avatar V</p>
-                                <Badge className="text-xs bg-amber-100 text-amber-700 border-amber-200 px-1.5">
-                                  ✨ NEW
-                                </Badge>
-                              </div>
-                              <p className="text-xs text-slate-500">
-                                Identity consistent · Multi-angle · Multi-look · Long-form
-                              </p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold text-slate-900">Avatar V</p>
+                              <Badge className="text-xs bg-amber-100 text-amber-700 border-amber-200 px-1.5">✨ NEW</Badge>
                             </div>
+                            <p className="text-xs text-slate-500">Identity consistent · Multi-angle · Long-form</p>
                           </div>
                         )}
                       </div>
                       {avatarEngine === engine && (
-                        <div className={`h-4 w-4 rounded-full flex-shrink-0 ${
-                          engine === 'avatar_v' ? 'bg-amber-500'
-                          : engine === 'avatar_iv' ? 'bg-blue-500'
-                          : 'bg-primary'
-                        }`} />
+                        <div className={`h-4 w-4 rounded-full flex-shrink-0 ${engine === 'avatar_v' ? 'bg-amber-500' : engine === 'avatar_iv' ? 'bg-blue-500' : 'bg-primary'}`} />
                       )}
                     </div>
                   </button>
                 ))}
-
                 {avatarEngine === 'avatar_v' && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1 mt-2">
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 mt-2">
                     <p className="font-semibold">Using Avatar V engine (launched April 8, 2026)</p>
-                    <p>
-                      Your Avatar V digital twin was created from a 15-second recording in
-                      your HeyGen account. It maintains perfect identity consistency across
-                      any angle, outfit change, and video length. Make sure the selected
-                      avatar was created with Avatar V (look for the V badge in HeyGen).
-                    </p>
+                    <p>Make sure your avatar was created with Avatar V in HeyGen.</p>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* NEW: Advanced Options Card */}
+            {/* Advanced Options Card */}
             <Card className="border border-slate-200">
               <button
                 className="w-full px-4 py-3 flex items-center justify-between"
                 onClick={() => setShowAdvanced(p => !p)}
               >
                 <span className="text-sm font-medium text-slate-700">Advanced Options</span>
-                {showAdvanced
-                  ? <ChevronUp className="h-4 w-4 text-slate-400" />
-                  : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                {showAdvanced ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
               </button>
-
               {showAdvanced && (
                 <CardContent className="pt-0 space-y-4 border-t border-slate-100">
                   <div className="space-y-2">
                     <Label className="text-xs text-slate-600">Output Resolution</Label>
                     <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { value: '720p', sub: '1280 × 720' },
-                        { value: '1080p', sub: '1920 × 1080 · Recommended' }
-                      ].map(r => (
+                      {[{ value: '720p', sub: '1280 × 720' }, { value: '1080p', sub: '1920 × 1080 · Recommended' }].map(r => (
                         <button
                           key={r.value}
                           onClick={() => setResolution(r.value)}
-                          className={`p-2.5 rounded-lg border-2 text-center transition-all ${
-                            resolution === r.value
-                              ? 'border-primary bg-primary/5'
-                              : 'border-slate-200 hover:border-slate-300'
-                          }`}
+                          className={`p-2.5 rounded-lg border-2 text-center transition-all ${resolution === r.value ? 'border-primary bg-primary/5' : 'border-slate-200 hover:border-slate-300'}`}
                         >
                           <p className="text-sm font-semibold text-slate-900">{r.value}</p>
                           <p className="text-xs text-slate-400">{r.sub}</p>
@@ -846,7 +929,6 @@ export default function CreatePage() {
                       ))}
                     </div>
                   </div>
-
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-slate-900">Auto Captions</p>
@@ -858,29 +940,21 @@ export default function CreatePage() {
               )}
             </Card>
 
-            {/* NEW: Advanced Generate Section */}
+            {/* Advanced Generate Section */}
             <Card className="border-2 border-primary">
               <CardContent className="pt-6 space-y-4">
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="outline" className="text-xs">
-                    {selectedHGVoice
+                    {voiceTab === 'elevenlabs' && selectedELVoice
+                      ? `🎙 EL: ${selectedELVoice.name}`
+                      : selectedHGVoice
                       ? `🔊 ${selectedHGVoice.name}`
                       : '🔊 HeyGen Default'}
                   </Badge>
-                  {avatarEngine === 'avatar_v' && (
-                    <Badge variant="outline" className="text-xs text-amber-700 border-amber-300">
-                      ✨ Avatar V
-                    </Badge>
-                  )}
-                  {avatarEngine === 'avatar_iv' && (
-                    <Badge variant="outline" className="text-xs text-blue-700 border-blue-300">
-                      ⚡ Avatar IV
-                    </Badge>
-                  )}
+                  {avatarEngine === 'avatar_v' && <Badge variant="outline" className="text-xs text-amber-700 border-amber-300">✨ Avatar V</Badge>}
+                  {avatarEngine === 'avatar_iv' && <Badge variant="outline" className="text-xs text-blue-700 border-blue-300">⚡ Avatar IV</Badge>}
                   <Badge variant="outline" className="text-xs">📐 {resolution}</Badge>
-                  {enableCaptions && (
-                    <Badge variant="outline" className="text-xs">📝 Captions ON</Badge>
-                  )}
+                  {enableCaptions && <Badge variant="outline" className="text-xs">📝 Captions ON</Badge>}
                 </div>
 
                 <Button
@@ -908,6 +982,6 @@ export default function CreatePage() {
           </div>
         </div>
       </div>
-    </div>
+    </div>``
   );
 }
