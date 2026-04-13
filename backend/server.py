@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
@@ -750,6 +751,18 @@ async def get_all_folders(current_user: dict = Depends(require_admin)):
     
     return [FolderResponse(**folder) for folder in folders]
 
+# ============= SCRIPT CLEANING HELPER =============
+
+def clean_script_for_tts(text: str) -> str:
+    import re
+    text = re.sub(r'#{1,6}\s*', '', text)
+    text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'^\s*[-2022]\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{2,}', '\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    return text.strip()
+
 # ============= HELPER FUNCTION FOR ELEVENLABS =============
 
 async def _elevenlabs_to_heygen_asset(
@@ -774,7 +787,7 @@ async def _elevenlabs_to_heygen_asset(
                 "Content-Type": "application/json"
             },
             json={
-                "text": script,
+                "text": clean_script_for_tts(script),
                 "model_id": model_id,
                 "voice_settings": {
                     "stability": stability,
