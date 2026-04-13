@@ -30,7 +30,18 @@ export default function CreatePage() {
   const [enhanceScript, setEnhanceScript] = useState(false);
   const [tone, setTone] = useState('Professional');
   const [duration, setDuration] = useState('30');
-  const [language, setLanguage] = useState('HINDI');
+  const [language, setLanguage] = useState('Hindi');
+
+  // Auto-detect duration from script length
+  useEffect(() => {
+    const chars = script.trim().length;
+    if (chars <= 150) setDuration('10');
+    else if (chars <= 300) setDuration('20');
+    else if (chars <= 450) setDuration('30');
+    else if (chars <= 800) setDuration('60');
+    else if (chars <= 1200) setDuration('90');
+    else setDuration('120');
+  }, [script]);
   const [title, setTitle] = useState('');
   
   const [loading, setLoading] = useState(false);
@@ -38,7 +49,7 @@ export default function CreatePage() {
   const [generating, setGenerating] = useState(false);
 
   // Voice section
-  const [voiceTab, setVoiceTab] = useState('elevenlabs');
+  const [voiceTab, setVoiceTab] = useState('heygen');
   // HeyGen voices
   const [heygenVoices, setHeygenVoices] = useState([]);
   const [heygenGenderFilter, setHeygenGenderFilter] = useState('all');
@@ -982,6 +993,6 @@ export default function CreatePage() {
           </div>
         </div>
       </div>
-    </div>``
+    </div>
   );
 }

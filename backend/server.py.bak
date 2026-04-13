@@ -6,7 +6,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
 import logging
-import asyncio as _asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional
@@ -59,7 +58,7 @@ class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
     password_hash: str
-    role: str = "user"
+    role: str = "user"  # user or admin
     credits: int = 100
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -109,7 +108,7 @@ class Video(BaseModel):
     duration: int
     video_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
-    status: str = "queued"
+    status: str = "queued"  # queued, generating, completed, failed
     folder_id: Optional[str] = None
     heygen_video_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -145,7 +144,7 @@ class ScriptEnhanceRequest(BaseModel):
 
 class ScriptRewriteRequest(BaseModel):
     script: str
-    tone: str
+    tone: str  # Emotional, Energetic, Slow delivery, Fast delivery, Professional
 
 class ScriptResponse(BaseModel):
     script: str
@@ -162,7 +161,7 @@ class ChatMessage(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     user_id: str
-    role: str
+    role: str  # user or assistant
     content: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -198,6 +197,7 @@ class ElevenLabsPreviewRequest(BaseModel):
     similarity_boost: float = 0.75
 
 class VideoCreateAdvanced(BaseModel):
+    # Core fields (same structure as VideoCreate)
     avatar_id: str
     avatar_name: str
     title: str
@@ -205,18 +205,25 @@ class VideoCreateAdvanced(BaseModel):
     language: str
     duration: int
     folder_id: Optional[str] = None
+    # Voice mode selection
     voice_mode: str = "heygen"
+    # "heygen"      = use HeyGen voice (with optional Method A EL)
+    # "elevenlabs"  = direct ElevenLabs API (Method B)
+    # HeyGen voice fields (voice_mode = "heygen")
     heygen_voice_id: Optional[str] = None
     heygen_voice_name: Optional[str] = None
-    use_el_in_heygen: bool = False
+    use_el_in_heygen: bool = False        # True = imported EL voice in HeyGen
     el_heygen_model: str = "eleven_multilingual_v2"
-    el_heygen_stability: float = 0.5
+    el_heygen_stability: float = 0.5     # will be quantized to 0, 0.5, or 1.0
+    # Direct ElevenLabs fields (voice_mode = "elevenlabs")
     elevenlabs_api_key: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     el_stability: float = 0.5
     el_similarity_boost: float = 0.75
-    avatar_engine: str = "standard"
+    # Avatar engine
+    avatar_engine: str = "standard"       # "standard" | "avatar_iv" | "avatar_v"
+    # Output
     width: int = 1920
     height: int = 1080
     enable_captions: bool = False
@@ -312,58 +319,6 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         current_user['created_at'] = datetime.fromisoformat(current_user['created_at'])
     return UserResponse(**current_user)
 
-# FIX 1: Forgot password route — BEFORE include_router
-@api_router.post("/auth/forgot-password")
-async def forgot_password(data: dict):
-    try:
-        import resend
-        import random
-        import string
-
-        resend.api_key = "re_J9GWkpbD_DUTtGDNJhxjnNCwjpoJJVCYc"
-
-        email = data.get("email", "").lower().strip()
-        user = await db.users.find_one({"email": email})
-        if not user:
-            raise HTTPException(status_code=404, detail="Email not found")
-
-        # Generate random temp password
-        temp_password = "Jio@" + "".join(random.choices(string.digits, k=6))
-        hashed = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-        await db.users.update_one(
-            {"email": email},
-            {"$set": {"password_hash": hashed}}
-        )
-
-        # FIX 2: Use verified eipimedia.com domain
-        resend.Emails.send({
-            "from": "Jio Finance <noreply@eipimedia.com>",
-            "to": email,
-            "subject": "Jio Finance - Password Reset",
-            "html": f"""
-            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #1a56db;">Jio Finance</h2>
-                <h3>Password Reset Request</h3>
-                <p>Your password has been reset successfully.</p>
-                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p style="margin: 0; font-size: 14px; color: #6b7280;">Your new temporary password:</p>
-                    <p style="margin: 8px 0 0 0; font-size: 24px; font-weight: bold; color: #1a56db; letter-spacing: 2px;">{temp_password}</p>
-                </div>
-                <p style="color: #ef4444;">Please login and change your password immediately.</p>
-                <p style="font-size: 12px; color: #9ca3af;">If you did not request this, please contact your administrator.</p>
-            </div>
-            """
-        })
-
-        # FIX 3: Single braces not double braces
-        return {"message": "Password reset email sent! Check your inbox."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Forgot password error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 # ============= AVATAR ROUTES =============
 
 @api_router.get("/avatars")
@@ -372,7 +327,9 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://api.heygen.com/v2/avatars",
-                headers={"X-Api-Key": HEYGEN_API_KEY},
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY
+                },
                 timeout=30.0
             )
             response.raise_for_status()
@@ -402,7 +359,7 @@ async def generate_script(data: ScriptGenerateRequest, current_user: dict = Depe
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"script-gen-{current_user['id']}-{uuid.uuid4()}",
-            system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें — कुछ और नहीं।"
+        system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें — कुछ और नहीं।"
         ).with_model("openai", "gpt-5.2")
         
         user_message = UserMessage(text=f"Generate a script for: {data.prompt}")
@@ -446,10 +403,10 @@ async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depend
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"script-rewrite-{current_user['id']}-{uuid.uuid4()}",
-            system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें।"
+        system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें।"
         ).with_model("openai", "gpt-5.2")
         
-        user_message = UserMessage(text=f"Rewrite this script in {instruction} tone:\n\n{data.script}")
+        user_message = UserMessage(text=f"Rewrite this script:\n\n{data.script}")
         response = await chat.send_message(user_message)
         
         return ScriptResponse(script=response)
@@ -463,12 +420,16 @@ async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depend
 async def preview_voice(data: VoicePreviewRequest, current_user: dict = Depends(get_current_user)):
     try:
         tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-        preview_text = data.script[:2000]
+        
+        # Use first 500 characters for preview to save costs
+        preview_text = data.script[:500]
+        
         audio_base64 = await tts.generate_speech_base64(
             text=preview_text,
             model="tts-1",
             voice="nova"
         )
+        
         return VoicePreviewResponse(audio_base64=audio_base64)
     except Exception as e:
         logging.error(f"Error generating voice preview: {str(e)}")
@@ -479,9 +440,11 @@ async def preview_voice(data: VoicePreviewRequest, current_user: dict = Depends(
 @api_router.post("/videos/generate", response_model=VideoResponse)
 async def generate_video(data: VideoCreate, current_user: dict = Depends(get_current_user)):
     try:
+        # Check credits
         if current_user["credits"] < 1:
             raise HTTPException(status_code=400, detail="Insufficient credits")
         
+        # Create video record
         video = Video(
             user_id=current_user["id"],
             avatar_id=data.avatar_id,
@@ -498,6 +461,7 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
         
+        # Call HeyGen API to generate video
         async with httpx.AsyncClient() as client:
             heygen_response = await client.post(
                 "https://api.heygen.com/v2/video/generate",
@@ -518,20 +482,26 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
                             "voice_id": "1bd001e7e50f421d891986aad5158bc8"
                         }
                     }],
-                    "dimension": {"width": 1280, "height": 720},
-                    "test": True
+                    "dimension": {
+                        "width": 1280,
+                        "height": 720
+                    },
+                    "test": True  # Set to False for production
                 },
                 timeout=30.0
             )
             heygen_response.raise_for_status()
             heygen_data = heygen_response.json()
+            
             video_id = heygen_data.get("data", {}).get("video_id")
             
+            # Update video with HeyGen video ID
             await db.videos.update_one(
                 {"id": video.id},
                 {"$set": {"heygen_video_id": video_id}}
             )
         
+        # Deduct credits
         await db.users.update_one(
             {"id": current_user["id"]},
             {"$inc": {"credits": -1}}
@@ -543,7 +513,10 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
         return VideoResponse(**video.model_dump())
     except httpx.HTTPStatusError as e:
         logging.error(f"HeyGen API error: {e.response.text}")
-        await db.videos.update_one({"id": video.id}, {"$set": {"status": "failed"}})
+        await db.videos.update_one(
+            {"id": video.id},
+            {"$set": {"status": "failed"}}
+        )
         raise HTTPException(status_code=500, detail=f"Video generation failed: {e.response.text}")
     except Exception as e:
         logging.error(f"Error generating video: {str(e)}")
@@ -556,30 +529,11 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
         
+        # Check if user owns the video or is admin
         if video["user_id"] != current_user["id"] and current_user["role"] != "admin":
             raise HTTPException(status_code=403, detail="Access denied")
-
-        # FIX: Always refresh URL for completed videos (signed URLs expire)
-        if video["status"] == "completed" and video.get("heygen_video_id"):
-            try:
-                async with httpx.AsyncClient(timeout=20.0) as hc:
-                    resp = await hc.get(
-                        f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}",
-                        headers={"X-Api-Key": HEYGEN_API_KEY}
-                    )
-                    fresh_url = resp.json().get("data", {}).get("video_url")
-                    if fresh_url:
-                        video["video_url"] = fresh_url
-                        await db.videos.update_one(
-                            {"id": video_id},
-                            {"$set": {"video_url": fresh_url}}
-                        )
-            except Exception as e:
-                logging.error(f"URL refresh error: {e}")
-            if isinstance(video['created_at'], str):
-                video['created_at'] = datetime.fromisoformat(video['created_at'])
-            return VideoResponse(**video)
-
+        
+        # If video is still generating, check HeyGen status
         if video["status"] == "generating" and video.get("heygen_video_id"):
             logging.info(f"Checking HeyGen status for: {video['heygen_video_id']}")
             async with httpx.AsyncClient() as client:
@@ -590,13 +544,16 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                 )
                 response.raise_for_status()
                 status_data = response.json()
+                logging.info(f"HeyGen response: {status_data}")
                 
                 heygen_status = status_data.get("data", {}).get("status")
                 video_url = status_data.get("data", {}).get("video_url")
                 thumbnail_url = status_data.get("data", {}).get("thumbnail_url")
                 
+                logging.info(f"Parsed - status: {heygen_status}, video_url: {video_url}, thumbnail_url: {thumbnail_url}")
+                
                 if heygen_status == "completed" and video_url:
-                    await db.videos.update_one(
+                    update_result = await db.videos.update_one(
                         {"id": video_id},
                         {"$set": {
                             "status": "completed",
@@ -604,6 +561,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                             "thumbnail_url": thumbnail_url
                         }}
                     )
+                    logging.info(f"MongoDB update result - matched: {update_result.matched_count}, modified: {update_result.modified_count}")
                     video["status"] = "completed"
                     video["video_url"] = video_url
                     video["thumbnail_url"] = thumbnail_url
@@ -613,6 +571,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                         {"$set": {"status": "failed"}}
                     )
                     video["status"] = "failed"
+                    logging.info(f"Video marked as failed")
         
         if isinstance(video['created_at'], str):
             video['created_at'] = datetime.fromisoformat(video['created_at'])
@@ -654,20 +613,28 @@ async def get_video(video_id: str, current_user: dict = Depends(get_current_user
 
 @api_router.post("/folders", response_model=FolderResponse)
 async def create_folder(data: FolderCreate, current_user: dict = Depends(get_current_user)):
-    folder = Folder(user_id=current_user["id"], name=data.name)
+    folder = Folder(
+        user_id=current_user["id"],
+        name=data.name
+    )
+    
     doc = folder.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.folders.insert_one(doc)
+    
     if isinstance(folder.created_at, str):
         folder.created_at = datetime.fromisoformat(folder.created_at)
+    
     return FolderResponse(**folder.model_dump())
 
 @api_router.get("/folders", response_model=List[FolderResponse])
 async def get_folders(current_user: dict = Depends(get_current_user)):
     folders = await db.folders.find({"user_id": current_user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
     for folder in folders:
         if isinstance(folder['created_at'], str):
             folder['created_at'] = datetime.fromisoformat(folder['created_at'])
+    
     return [FolderResponse(**folder) for folder in folders]
 
 @api_router.delete("/folders/{folder_id}")
@@ -675,9 +642,16 @@ async def delete_folder(folder_id: str, current_user: dict = Depends(get_current
     folder = await db.folders.find_one({"id": folder_id}, {"_id": 0})
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
+    
     if folder["user_id"] != current_user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
-    await db.videos.update_many({"folder_id": folder_id}, {"$set": {"folder_id": None}})
+    
+    # Remove folder_id from all videos in this folder
+    await db.videos.update_many(
+        {"folder_id": folder_id},
+        {"$set": {"folder_id": None}}
+    )
+    
     await db.folders.delete_one({"id": folder_id})
     return {"message": "Folder deleted"}
 
@@ -686,6 +660,7 @@ async def delete_folder(folder_id: str, current_user: dict = Depends(get_current
 @api_router.post("/chat/message", response_model=ChatResponse)
 async def chat_message(data: ChatRequest, current_user: dict = Depends(get_current_user)):
     try:
+        # Save user message
         user_msg = ChatMessage(
             session_id=data.session_id,
             user_id=current_user["id"],
@@ -696,6 +671,17 @@ async def chat_message(data: ChatRequest, current_user: dict = Depends(get_curre
         user_doc['created_at'] = user_doc['created_at'].isoformat()
         await db.chat_messages.insert_one(user_doc)
         
+        # Get chat history for context
+        history = await db.chat_messages.find(
+            {"session_id": data.session_id},
+            {"_id": 0}
+        ).sort("created_at", 1).to_list(50)
+        
+        # Build conversation context
+        conversation = "\n".join([
+            f"{msg['role']}: {msg['content']}" for msg in history[-10:]
+        ])
+        
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=data.session_id,
@@ -705,6 +691,7 @@ async def chat_message(data: ChatRequest, current_user: dict = Depends(get_curre
         user_message = UserMessage(text=data.message)
         response = await chat.send_message(user_message)
         
+        # Save assistant message
         assistant_msg = ChatMessage(
             session_id=data.session_id,
             user_id=current_user["id"],
@@ -725,41 +712,53 @@ async def chat_message(data: ChatRequest, current_user: dict = Depends(get_curre
 @api_router.get("/admin/users", response_model=List[UserResponse])
 async def get_all_users(current_user: dict = Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    
     for user in users:
         if isinstance(user['created_at'], str):
             user['created_at'] = datetime.fromisoformat(user['created_at'])
+    
     return [UserResponse(**user) for user in users]
 
 @api_router.get("/admin/videos", response_model=List[VideoResponse])
 async def get_all_videos(current_user: dict = Depends(require_admin)):
     videos = await db.videos.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
     for video in videos:
         if isinstance(video['created_at'], str):
             video['created_at'] = datetime.fromisoformat(video['created_at'])
+    
     return [VideoResponse(**video) for video in videos]
 
 @api_router.put("/admin/users/{user_id}/credits")
 async def update_user_credits(user_id: str, data: UpdateCreditsRequest, current_user: dict = Depends(require_admin)):
-    result = await db.users.update_one({"id": user_id}, {"$set": {"credits": data.credits}})
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"credits": data.credits}}
+    )
+    
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
+    
     return {"message": "Credits updated"}
 
 @api_router.get("/admin/folders", response_model=List[FolderResponse])
 async def get_all_folders(current_user: dict = Depends(require_admin)):
     folders = await db.folders.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
     for folder in folders:
         if isinstance(folder['created_at'], str):
             folder['created_at'] = datetime.fromisoformat(folder['created_at'])
+    
     return [FolderResponse(**folder) for folder in folders]
 
 # ============= SCRIPT CLEANING HELPER =============
 
 def clean_script_for_tts(text: str) -> str:
+    import re
     text = re.sub(r'#{1,6}\s*', '', text)
     text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
     text = re.sub(r'\[.*?\]', '', text)
-    text = re.sub(r'^\s*[-\u2022]\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*[-2022]\s*', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n{2,}', '\n', text)
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
@@ -774,8 +773,12 @@ async def _elevenlabs_to_heygen_asset(
     stability: float = 0.5,
     similarity_boost: float = 0.75
 ) -> str:
+    """
+    Calls ElevenLabs TTS → uploads MP3 to HeyGen → returns audio_asset_id
+    """
     api_key = el_api_key if el_api_key else ELEVENLABS_API_KEY
     async with httpx.AsyncClient(timeout=120.0) as client:
+        # 1. Generate audio from ElevenLabs
         el_resp = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{el_voice_id}",
             headers={
@@ -799,6 +802,7 @@ async def _elevenlabs_to_heygen_asset(
         el_resp.raise_for_status()
         logging.info(f"EL TTS status: {el_resp.status_code}, bytes: {len(el_resp.content)}")
 
+        # 2. Upload MP3 to HeyGen
         hg_resp = await client.post(
             "https://upload.heygen.com/v1/asset",
             headers={
@@ -808,16 +812,18 @@ async def _elevenlabs_to_heygen_asset(
             content=el_resp.content
         )
         logging.info(f"HeyGen asset upload status: {hg_resp.status_code}")
+        logging.info(f"HeyGen asset response: {hg_resp.text}")
         hg_resp.raise_for_status()
         asset_id = hg_resp.json().get("data", {}).get("id")
         if not asset_id:
             raise ValueError(f"HeyGen asset upload failed: {hg_resp.json()}")
         return asset_id
 
-# ============= HEYGEN + ELEVENLABS ROUTES =============
+# ============= NEW AVATAR V + ELEVENLABS ROUTES =============
 
 @api_router.get("/heygen/voices")
 async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
+    """Fetch all HeyGen voices including any imported ElevenLabs voices."""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
@@ -831,27 +837,53 @@ async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
         logging.error(f"HeyGen voices error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @api_router.post("/heygen/tts-preview")
-async def heygen_tts_preview(data: HeyGenTTSRequest, current_user: dict = Depends(get_current_user)):
+async def heygen_tts_preview(
+    data: HeyGenTTSRequest,
+    current_user: dict = Depends(get_current_user)
+):
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 "https://api.heygen.com/v1/audio/text_to_speech",
-                headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
-                json={"text": data.script[:500], "voice_id": data.voice_id}
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": data.script[:500],
+                    "voice_id": data.voice_id
+                }
             )
             resp.raise_for_status()
             result = resp.json()
-            audio_url = (result.get("data", {}).get("audio_url") or result.get("audio_url") or result.get("data", {}).get("url"))
-            audio_b64 = (result.get("data", {}).get("audio") or result.get("audio"))
-            return {"audio_url": audio_url, "audio_base64": audio_b64}
+            # Response can be audio_url or base64
+            audio_url = (result.get("data", {}).get("audio_url") or
+                        result.get("audio_url") or
+                        result.get("data", {}).get("url"))
+            audio_b64 = (result.get("data", {}).get("audio") or
+                        result.get("audio"))
+            return {
+                "audio_url": audio_url,
+                "audio_base64": audio_b64
+            }
     except Exception as e:
         logging.error(f"HeyGen TTS preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @api_router.post("/voice/script-preview")
-async def voice_script_preview(data: ScriptPreviewRequest, current_user: dict = Depends(get_current_user)):
+async def voice_script_preview(
+    data: ScriptPreviewRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Generate a voice preview using ElevenLabs by matching the HeyGen voice name.
+    Returns base64 audio of the script spoken in the matched ElevenLabs voice.
+    """
     try:
+        # 1. Fetch ElevenLabs voices and find a match by name
         matched_el_voice_id = None
         async with httpx.AsyncClient(timeout=30.0) as client:
             el_resp = await client.get(
@@ -870,40 +902,77 @@ async def voice_script_preview(data: ScriptPreviewRequest, current_user: dict = 
                     break
         
         if not matched_el_voice_id:
-            raise HTTPException(status_code=400, detail=f"No ElevenLabs voice found matching '{data.heygen_voice_name}'")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No ElevenLabs voice found matching '{data.heygen_voice_name}'"
+            )
         
-        preview_text = clean_script_for_tts(data.script)[:2000] if data.script.strip() else "Hello, this is a voice preview."
+        # 2. Generate TTS with matched voice (first 500 chars for preview)
+        preview_text = data.script[:500] if data.script.strip() else "Hello, this is a voice preview."
         async with httpx.AsyncClient(timeout=60.0) as client:
             tts_resp = await client.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{matched_el_voice_id}",
-                headers={"xi-api-key": ELEVENLABS_API_KEY, "Accept": "audio/mpeg", "Content-Type": "application/json"},
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json"
+                },
                 json={
                     "text": preview_text,
                     "model_id": data.model_id,
-                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.0, "use_speaker_boost": True}
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
                 }
             )
             if tts_resp.status_code == 401:
                 raise HTTPException(status_code=500, detail="ElevenLabs API key invalid")
             tts_resp.raise_for_status()
-            return {"audio_base64": base64.b64encode(tts_resp.content).decode("utf-8"), "matched_voice_name": data.heygen_voice_name}
+            
+            return {
+                "audio_base64": base64.b64encode(tts_resp.content).decode("utf-8"),
+                "matched_voice_name": data.heygen_voice_name
+            }
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Script preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @api_router.post("/elevenlabs/voices")
-async def get_elevenlabs_voices(data: ElevenLabsVoicesRequest, current_user: dict = Depends(get_current_user)):
+async def get_elevenlabs_voices(
+    data: ElevenLabsVoicesRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Fetch user's ElevenLabs voices. API key only used for this request, never stored."""
     try:
         api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key})
+            resp = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": api_key}
+            )
             if resp.status_code == 401:
-                raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid ElevenLabs API key. Get yours at elevenlabs.io"
+                )
             resp.raise_for_status()
             raw = resp.json().get("voices", [])
-            voices = [{"voice_id": v.get("voice_id"), "name": v.get("name"), "category": v.get("category", ""), "preview_url": v.get("preview_url"), "labels": v.get("labels", {})} for v in raw]
+            voices = [
+                {
+                    "voice_id": v.get("voice_id"),
+                    "name": v.get("name"),
+                    "category": v.get("category", ""),
+                    "preview_url": v.get("preview_url"),
+                    "labels": v.get("labels", {}),
+                }
+                for v in raw
+            ]
             return {"voices": voices, "count": len(voices)}
     except HTTPException:
         raise
@@ -911,43 +980,82 @@ async def get_elevenlabs_voices(data: ElevenLabsVoicesRequest, current_user: dic
         logging.error(f"ElevenLabs voices error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @api_router.post("/elevenlabs/preview")
-async def elevenlabs_preview(data: ElevenLabsPreviewRequest, current_user: dict = Depends(get_current_user)):
+async def elevenlabs_preview(
+    data: ElevenLabsPreviewRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Generate ElevenLabs voice preview using first 500 chars. Returns base64 MP3."""
     try:
         api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
-        text = clean_script_for_tts(data.script)[:2000] if data.script.strip() else "Hello, this is a voice preview."
+        text = data.script[:500] if data.script.strip() else "Hello, this is a voice preview."
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{data.elevenlabs_voice_id}",
-                headers={"xi-api-key": api_key, "Accept": "audio/mpeg", "Content-Type": "application/json"},
-                json={"text": text, "model_id": data.model_id, "voice_settings": {"stability": data.stability, "similarity_boost": data.similarity_boost, "style": 0.0, "use_speaker_boost": True}}
+                headers={
+                    "xi-api-key": api_key,
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": text,
+                    "model_id": data.model_id,
+                    "voice_settings": {
+                        "stability": data.stability,
+                        "similarity_boost": data.similarity_boost,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                }
             )
             if resp.status_code == 401:
                 raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
             resp.raise_for_status()
-            return {"audio_base64": base64.b64encode(resp.content).decode("utf-8")}
+            return {
+                "audio_base64": base64.b64encode(resp.content).decode("utf-8")
+            }
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"ElevenLabs preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @api_router.post("/videos/generate-advanced", response_model=VideoResponse)
-async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict = Depends(get_current_user)):
+async def generate_video_advanced(
+    data: VideoCreateAdvanced,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Advanced video generation:
+    - Avatar V (use_avatar_v_model: true) — HeyGen April 8 2026
+    - Avatar IV (use_avatar_iv_model: true)
+    - ElevenLabs Method A: HeyGen-native (elevanlabs_settings)
+    - ElevenLabs Method B: Direct API → upload → audio_asset_id
+    - 1080p default, captions optional
+    Stored in db.videos → auto appears in HistoryPage, status polling works
+    """
     video = None
     try:
         logging.info(f"generate-advanced called with avatar_id: {data.avatar_id}")
-        logging.info(f"voice_mode: {data.voice_mode}, use_el_in_heygen: {data.use_el_in_heygen}")
-
+        logging.info(f"voice_mode: {data.voice_mode}")
+        logging.info(f"use_el_in_heygen: {data.use_el_in_heygen}")
+        logging.info(f"heygen_voice_name: {data.heygen_voice_name}")
+        logging.info(f"heygen_voice_id: {data.heygen_voice_id}")
+        
+        # Credit check
         if current_user["credits"] < 1:
             raise HTTPException(status_code=400, detail="Insufficient credits")
 
+        # Validate ElevenLabs direct mode inputs
         if data.voice_mode == "elevenlabs":
             if not data.elevenlabs_api_key:
                 raise HTTPException(status_code=400, detail="ElevenLabs API key required")
             if not data.elevenlabs_voice_id:
                 raise HTTPException(status_code=400, detail="ElevenLabs voice ID required")
 
+        # Create DB record (same pattern as existing generate route)
         video = Video(
             user_id=current_user["id"],
             avatar_id=data.avatar_id,
@@ -965,6 +1073,7 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
 
         # Build voice block
         if data.voice_mode == "elevenlabs":
+            # Method B: Direct ElevenLabs → upload to HeyGen → use asset
             asset_id = await _elevenlabs_to_heygen_asset(
                 el_api_key=data.elevenlabs_api_key,
                 el_voice_id=data.elevenlabs_voice_id,
@@ -973,9 +1082,13 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                 stability=data.el_stability,
                 similarity_boost=data.el_similarity_boost
             )
-            voice_block = {"type": "audio", "audio_asset_id": asset_id}
-
+            voice_block = {
+                "type": "audio",
+                "audio_asset_id": asset_id
+            }
         elif data.voice_mode == "heygen" and data.use_el_in_heygen:
+            # New Method: Match voice name to ElevenLabs voice_id
+            # then generate audio directly and upload to HeyGen
             matched_el_voice_id = None
             try:
                 async with httpx.AsyncClient(timeout=30.0) as el_client:
@@ -1005,7 +1118,11 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     stability=data.el_heygen_stability,
                     similarity_boost=0.75
                 )
-                voice_block = {"type": "audio", "audio_asset_id": asset_id}
+                logging.info(f"Asset ID received: {asset_id}")
+                voice_block = {
+                    "type": "audio",
+                    "audio_asset_id": asset_id
+                }
                 logging.info(f"Using EL audio asset: {asset_id}")
             else:
                 logging.warning(f"No EL voice match for: {data.heygen_voice_name}, using HeyGen voice")
@@ -1016,35 +1133,71 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "speed": 1.0
                 }
         elif data.heygen_voice_id:
-            voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id, "speed": 1.0}
+            # Standard HeyGen voice
+            voice_block = {
+                "type": "text",
+                "input_text": data.script,
+                "voice_id": data.heygen_voice_id,
+                "speed": 1.0
+            }
         else:
-            voice_block = {"type": "text", "input_text": data.script, "voice_id": "1bd001e7e50f421d891986aad5158bc8", "speed": 1.0}
+            # Default fallback voice
+            voice_block = {
+                "type": "text",
+                "input_text": data.script,
+                "voice_id": "1bd001e7e50f421d891986aad5158bc8",
+                "speed": 1.0
+            }
 
-        character_block = {"type": "avatar", "avatar_id": data.avatar_id, "avatar_style": "normal"}
+        # Build character block
+        character_block = {
+            "type": "avatar",
+            "avatar_id": data.avatar_id,
+            "avatar_style": "normal"
+        }
         if data.avatar_engine == "avatar_v":
             character_block["use_avatar_v_model"] = True
         elif data.avatar_engine == "avatar_iv":
             character_block["use_avatar_iv_model"] = True
 
+        # Build full HeyGen payload
         payload = {
-            "video_inputs": [{"character": character_block, "voice": voice_block, "background": {"type": "color", "value": "#ffffff"}}],
+            "video_inputs": [{
+                "character": character_block,
+                "voice": voice_block,
+                "background": {"type": "color", "value": "#ffffff"}
+            }],
             "dimension": {"width": data.width, "height": data.height},
             "caption": data.enable_captions,
             "test": False
         }
 
+        # Call HeyGen API
         async with httpx.AsyncClient(timeout=60.0) as client:
             hg = await client.post(
                 "https://api.heygen.com/v2/video/generate",
-                headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                headers={
+                    "X-Api-Key": HEYGEN_API_KEY,
+                    "Content-Type": "application/json"
+                },
                 json=payload
             )
             logging.info(f"HeyGen video generate status: {hg.status_code}")
+            logging.info(f"HeyGen video response: {hg.text}")
             hg.raise_for_status()
             heygen_video_id = hg.json().get("data", {}).get("video_id")
 
-        await db.videos.update_one({"id": video.id}, {"$set": {"heygen_video_id": heygen_video_id}})
-        await db.users.update_one({"id": current_user["id"]}, {"$inc": {"credits": -1}})
+        # Store HeyGen video ID (same pattern as existing route)
+        await db.videos.update_one(
+            {"id": video.id},
+            {"$set": {"heygen_video_id": heygen_video_id}}
+        )
+
+        # Deduct 1 credit (same pattern as existing route)
+        await db.users.update_one(
+            {"id": current_user["id"]},
+            {"$inc": {"credits": -1}}
+        )
 
         if isinstance(video.created_at, str):
             video.created_at = datetime.fromisoformat(video.created_at)
@@ -1053,62 +1206,29 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
 
     except HTTPException:
         if video:
-            await db.videos.update_one({"id": video.id}, {"$set": {"status": "failed"}})
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
         raise
     except httpx.HTTPStatusError as e:
         logging.error(f"HeyGen error: {e.response.text}")
         if video:
-            await db.videos.update_one({"id": video.id}, {"$set": {"status": "failed"}})
-        raise HTTPException(status_code=500, detail=f"Video generation failed: {e.response.text}")
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Video generation failed: {e.response.text}"
+        )
     except Exception as e:
         logging.error(f"Advanced generate error: {e}")
         if video:
-            await db.videos.update_one({"id": video.id}, {"$set": {"status": "failed"}})
+            await db.videos.update_one(
+                {"id": video.id}, {"$set": {"status": "failed"}}
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============= AUTO STATUS POLLING =============
-
-async def _poll_heygen_videos():
-    await _asyncio.sleep(15)
-    while True:
-        try:
-            videos = await db.videos.find(
-                {"status": "generating", "heygen_video_id": {"$exists": True, "$ne": None}},
-                {"_id": 0, "id": 1, "heygen_video_id": 1}
-            ).to_list(20)
-            for video in videos:
-                hg_id = video.get("heygen_video_id")
-                if not hg_id:
-                    continue
-                try:
-                    async with httpx.AsyncClient(timeout=20.0) as hc:
-                        resp = await hc.get(
-                            f"https://api.heygen.com/v1/video_status.get?video_id={hg_id}",
-                            headers={"X-Api-Key": HEYGEN_API_KEY}
-                        )
-                        data = resp.json().get("data", {})
-                        status = data.get("status")
-                        video_url = data.get("video_url")
-                        thumbnail_url = data.get("thumbnail_url")
-                        if status == "completed" and video_url:
-                            await db.videos.update_one(
-                                {"heygen_video_id": hg_id},
-                                {"$set": {"status": "completed", "video_url": video_url, "thumbnail_url": thumbnail_url}}
-                            )
-                            logging.info(f"Auto-poll: {hg_id} completed")
-                        elif status == "failed":
-                            await db.videos.update_one(
-                                {"heygen_video_id": hg_id},
-                                {"$set": {"status": "failed"}}
-                            )
-                            logging.info(f"Auto-poll: {hg_id} failed")
-                except Exception as e:
-                    logging.error(f"Poll error for {hg_id}: {e}")
-        except Exception as e:
-            logging.error(f"Auto-poll loop error: {e}")
-        await _asyncio.sleep(30)
-
-# FIX: include_router BEFORE middleware and startup
+# Include the router in the main app
 app.include_router(api_router)
 
 app.add_middleware(
@@ -1129,8 +1249,54 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+# ============= AUTO STATUS POLLING =============
 
-# FIX: Single startup event only
+import asyncio as _asyncio
+
+async def _poll_heygen_videos():
+    """Background task: checks HeyGen status every 30s and updates MongoDB automatically."""
+    await _asyncio.sleep(10)  # wait for server to start
+    while True:
+        try:
+            videos = await db.videos.find(
+                {'status': 'generating', 'heygen_video_id': {'$exists': True, '$ne': None}},
+                {'_id': 0, 'id': 1, 'heygen_video_id': 1, 'created_at': 1}
+            ).to_list(20)
+
+            for video in videos:
+                hg_id = video.get('heygen_video_id')
+                if not hg_id:
+                    continue
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as hc:
+                        resp = await hc.get(
+                            f"https://api.heygen.com/v1/video_status.get?video_id={hg_id}",
+                            headers={"X-Api-Key": HEYGEN_API_KEY}
+                        )
+                        data = resp.json().get('data', {})
+                        status = data.get('status')
+                        video_url = data.get('video_url')
+                        thumbnail_url = data.get('thumbnail_url')
+
+                        if status == 'completed' and video_url:
+                            await db.videos.update_one(
+                                {'heygen_video_id': hg_id},
+                                {'$set': {'status': 'completed', 'video_url': video_url, 'thumbnail_url': thumbnail_url}}
+                            )
+                            logging.info(f"Auto-poll: {hg_id} → completed")
+                        elif status == 'failed':
+                            await db.videos.update_one(
+                                {'heygen_video_id': hg_id},
+                                {'$set': {'status': 'failed'}}
+                            )
+                            logging.info(f"Auto-poll: {hg_id} → failed")
+                except Exception as e:
+                    logging.error(f"Poll error for {hg_id}: {e}")
+        except Exception as e:
+            logging.error(f"Auto-poll loop error: {e}")
+        await _asyncio.sleep(30)
+
 @app.on_event("startup")
 async def start_polling():
     _asyncio.create_task(_poll_heygen_videos())
+``

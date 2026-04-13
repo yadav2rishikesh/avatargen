@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import axios from 'axios';
+const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
@@ -27,6 +29,28 @@ export default function LoginPage() {
       toast.error(error.response?.data?.detail || 'Invalid credentials');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [showForgot, setShowForgot] = React.useState(false);
+  const [forgotEmail, setForgotEmail] = React.useState('');
+  const [forgotMsg, setForgotMsg] = React.useState('');
+  const [forgotLoading, setForgotLoading] = React.useState(false);
+
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.trim()) {
+      setForgotMsg('Please enter your email');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotMsg('');
+    try {
+      await axios.post(`${API_URL}/auth/forgot-password`, { email: forgotEmail });
+      setForgotMsg('success:Password reset! Check your email inbox.');
+    } catch (err) {
+      setForgotMsg('error:' + (err.response?.data?.detail || 'Email not found'));
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -77,6 +101,42 @@ export default function LoginPage() {
                     required
                     className="h-11"
                   />
+                </div>
+                <div className="mt-1 mb-3">
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      className="text-sm text-blue-600 hover:underline"
+                      onClick={() => { setShowForgot(!showForgot); setForgotMsg(''); setForgotEmail(''); }}
+                    >
+                      Forgot Password?
+                    </button>
+                  </div>
+                  {showForgot && (
+                    <div className="mt-3 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Reset your password</p>
+                      <input
+                        type="email"
+                        placeholder="Enter your email address"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={forgotLoading}
+                        className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {forgotLoading ? 'Sending...' : 'Send Reset Email'}
+                      </button>
+                      {forgotMsg && (
+                        <p className={`text-sm mt-2 ${forgotMsg.startsWith('success:') ? 'text-green-600' : 'text-red-500'}`}>
+                          {forgotMsg.replace('success:', '').replace('error:', '')}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <Button
                   data-testid="login-submit-button"
