@@ -14,11 +14,10 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import bcrypt
 import jwt
-from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.llm.openai import OpenAITextToSpeech
 import httpx
 import base64
 import io
+import secrets
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -30,9 +29,13 @@ db = client[os.environ['DB_NAME']]
 
 # Environment variables
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 HEYGEN_API_KEY = os.environ.get('HEYGEN_API_KEY')
 ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', 'sk_cfa652388dad22ed13e0d36de0a31b235e34a91a2dbd21c8')
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', 're_J9GWkpbD_DUTtGDNJhxjnNCwjpoJJVCYc')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# Keep EMERGENT_LLM_KEY for script generation (works on Emergent platform)
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -81,6 +84,13 @@ class UserResponse(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     user: UserResponse
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 class Folder(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -263,18 +273,18 @@ async def signup(data: UserSignup):
     existing = await db.users.find_one({"email": data.email}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     user = User(
         email=data.email,
         password_hash=hash_password(data.password),
         role="user",
         credits=100
     )
-    
+
     doc = user.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.users.insert_one(doc)
-    
+
     token = create_token(user.id, user.email, user.role)
     user_response = UserResponse(
         id=user.id,
@@ -283,7 +293,7 @@ async def signup(data: UserSignup):
         credits=user.credits,
         created_at=user.created_at
     )
-    
+
     return TokenResponse(token=token, user=user_response)
 
 @api_router.post("/auth/login", response_model=TokenResponse)
@@ -291,11 +301,11 @@ async def login(data: UserLogin):
     user = await db.users.find_one({"email": data.email}, {"_id": 0})
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     token = create_token(user["id"], user["email"], user["role"])
     if isinstance(user['created_at'], str):
         user['created_at'] = datetime.fromisoformat(user['created_at'])
-    
+
     user_response = UserResponse(
         id=user["id"],
         email=user["email"],
@@ -303,7 +313,7 @@ async def login(data: UserLogin):
         credits=user["credits"],
         created_at=user["created_at"]
     )
-    
+
     return TokenResponse(token=token, user=user_response)
 
 @api_router.get("/auth/me", response_model=UserResponse)
@@ -312,74 +322,159 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         current_user['created_at'] = datetime.fromisoformat(current_user['created_at'])
     return UserResponse(**current_user)
 
-# FIX 1: Forgot password route — BEFORE include_router
+# ============= FORGOT PASSWORD — PRODUCTION FLOW =============
+# Step 1: User requests reset → generates secure token → sends email with link
+# Step 2: User clicks link → lands on /reset-password?token=xxx → enters new password
+# Step 3: Backend validates token (expiry + one-time use) → updates password
+
 @api_router.post("/auth/forgot-password")
-async def forgot_password(data: dict):
+async def forgot_password(data: ForgotPasswordRequest):
     try:
         import resend
-        import random
-        import string
 
-        resend.api_key = "re_J9GWkpbD_DUTtGDNJhxjnNCwjpoJJVCYc"
+        resend.api_key = RESEND_API_KEY
 
-        email = data.get("email", "").lower().strip()
+        email = data.email.lower().strip()
         user = await db.users.find_one({"email": email})
+
+        # Always return success — never reveal if email exists (security best practice)
         if not user:
-            raise HTTPException(status_code=404, detail="Email not found")
+            return {"message": "If this email exists, a reset link has been sent."}
 
-        # Generate random temp password
-        temp_password = "Jio@" + "".join(random.choices(string.digits, k=6))
-        hashed = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        # Generate cryptographically secure token
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
 
-        await db.users.update_one(
-            {"email": email},
-            {"$set": {"password_hash": hashed}}
-        )
+        # Delete any existing tokens for this email (one at a time)
+        await db.password_reset_tokens.delete_many({"email": email})
 
-        # FIX 2: Use verified eipimedia.com domain
+        # Store token in DB
+        await db.password_reset_tokens.insert_one({
+            "email": email,
+            "token": token,
+            "expires_at": expires_at.isoformat(),
+            "used": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        # Build reset link pointing to frontend
+        reset_link = f"{FRONTEND_URL}/reset-password?token={token}"
+
+        # Send branded email
         resend.Emails.send({
-            "from": "Jio Finance <noreply@eipimedia.com>",
+            "from": "JioGen AI <noreply@eipimedia.com>",
             "to": email,
-            "subject": "Jio Finance - Password Reset",
+            "subject": "Reset Your Password — JioGen AI",
             "html": f"""
-            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #1a56db;">Jio Finance</h2>
-                <h3>Password Reset Request</h3>
-                <p>Your password has been reset successfully.</p>
-                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p style="margin: 0; font-size: 14px; color: #6b7280;">Your new temporary password:</p>
-                    <p style="margin: 8px 0 0 0; font-size: 24px; font-weight: bold; color: #1a56db; letter-spacing: 2px;">{temp_password}</p>
+            <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 40px 24px; background: #ffffff;">
+
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <div style="display: inline-block; background: #1a56db; border-radius: 12px; padding: 12px 24px;">
+                        <span style="color: white; font-size: 22px; font-weight: 700; letter-spacing: 0.5px;">JioGen AI</span>
+                    </div>
                 </div>
-                <p style="color: #ef4444;">Please login and change your password immediately.</p>
-                <p style="font-size: 12px; color: #9ca3af;">If you did not request this, please contact your administrator.</p>
+
+                <h2 style="color: #111827; font-size: 22px; font-weight: 700; margin: 0 0 12px;">Reset your password</h2>
+                <p style="color: #6b7280; font-size: 15px; line-height: 1.6; margin-bottom: 28px;">
+                    We received a request to reset the password for your account (<strong>{email}</strong>).
+                    Click the button below to set a new password.
+                    <br/><br/>
+                    This link will expire in <strong>15 minutes</strong> and can only be used once.
+                </p>
+
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <a href="{reset_link}"
+                       style="background: #1a56db; color: #ffffff; text-decoration: none;
+                              padding: 14px 36px; border-radius: 8px; font-size: 16px;
+                              font-weight: 600; display: inline-block; letter-spacing: 0.3px;">
+                        Reset Password
+                    </a>
+                </div>
+
+                <p style="color: #9ca3af; font-size: 13px; margin-bottom: 6px;">
+                    Button not working? Copy and paste this link into your browser:
+                </p>
+                <p style="font-size: 12px; word-break: break-all; background: #f3f4f6;
+                           padding: 12px; border-radius: 6px; color: #1a56db; margin-bottom: 28px;">
+                    {reset_link}
+                </p>
+
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 0 0 20px;" />
+                <p style="color: #9ca3af; font-size: 12px; line-height: 1.5; margin: 0;">
+                    If you didn't request a password reset, you can safely ignore this email.
+                    Your password will not change unless you click the link above.
+                    <br/><br/>
+                    &copy; {datetime.now().year} JioGen AI — EiPi Media Pvt. Ltd.
+                </p>
+
             </div>
             """
         })
 
-        # FIX 3: Single braces not double braces
-        return {"message": "Password reset email sent! Check your inbox."}
+        return {"message": "If this email exists, a reset link has been sent."}
+
+    except Exception as e:
+        logging.error(f"Forgot password error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send reset email. Please try again.")
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(data: ResetPasswordRequest):
+    try:
+        # Validate password strength
+        if len(data.new_password) < 8:
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+        # Look up token
+        record = await db.password_reset_tokens.find_one({"token": data.token})
+        if not record:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
+
+        # Check if already used
+        if record.get("used"):
+            raise HTTPException(status_code=400, detail="This reset link has already been used. Please request a new one.")
+
+        # Check expiry
+        expires_at = datetime.fromisoformat(record["expires_at"])
+        if datetime.now(timezone.utc) > expires_at:
+            await db.password_reset_tokens.delete_one({"token": data.token})
+            raise HTTPException(status_code=400, detail="This reset link has expired. Please request a new one.")
+
+        # Update password
+        hashed = bcrypt.hashpw(data.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        await db.users.update_one(
+            {"email": record["email"]},
+            {"$set": {"password_hash": hashed}}
+        )
+
+        # Delete token — one-time use
+        await db.password_reset_tokens.delete_one({"token": data.token})
+
+        logging.info(f"Password reset successful for: {record['email']}")
+        return {"message": "Password reset successfully. You can now log in with your new password."}
+
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Forgot password error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Reset password error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset password. Please try again.")
 
 # ============= AVATAR ROUTES =============
 
 @api_router.get("/avatars")
 async def get_avatars(current_user: dict = Depends(get_current_user)):
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
+        async with httpx.AsyncClient() as hclient:
+            response = await hclient.get(
                 "https://api.heygen.com/v2/avatars",
                 headers={"X-Api-Key": HEYGEN_API_KEY},
                 timeout=30.0
             )
             response.raise_for_status()
             data = response.json()
-            
+
             all_avatars = data.get("data", {}).get("avatars", [])
-            
+
             seen_ids = set()
             filtered_avatars = []
             for avatar in all_avatars:
@@ -388,7 +483,7 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
                     seen_ids.add(avatar_id)
                     avatar["display_name"] = JIO_AVATARS[avatar_id]
                     filtered_avatars.append(avatar)
-            
+
             return {"avatars": filtered_avatars}
     except Exception as e:
         logging.error(f"Error fetching avatars: {str(e)}")
@@ -399,15 +494,16 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
 @api_router.post("/scripts/generate", response_model=ScriptResponse)
 async def generate_script(data: ScriptGenerateRequest, current_user: dict = Depends(get_current_user)):
     try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"script-gen-{current_user['id']}-{uuid.uuid4()}",
             system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें — कुछ और नहीं।"
         ).with_model("openai", "gpt-5.2")
-        
+
         user_message = UserMessage(text=f"Generate a script for: {data.prompt}")
         response = await chat.send_message(user_message)
-        
+
         return ScriptResponse(script=response)
     except Exception as e:
         logging.error(f"Error generating script: {str(e)}")
@@ -416,15 +512,16 @@ async def generate_script(data: ScriptGenerateRequest, current_user: dict = Depe
 @api_router.post("/scripts/enhance", response_model=ScriptResponse)
 async def enhance_script(data: ScriptEnhanceRequest, current_user: dict = Depends(get_current_user)):
     try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"script-enhance-{current_user['id']}-{uuid.uuid4()}",
             system_message="You are a professional script editor. Enhance the provided script by improving vocabulary, clarity, and flow while maintaining the original message and tone."
         ).with_model("openai", "gpt-5.2")
-        
+
         user_message = UserMessage(text=f"Enhance this script:\n\n{data.script}")
         response = await chat.send_message(user_message)
-        
+
         return ScriptResponse(script=response)
     except Exception as e:
         logging.error(f"Error enhancing script: {str(e)}")
@@ -440,18 +537,19 @@ async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depend
             "Fast delivery": "Rewrite for quick, punchy delivery with short sentences.",
             "Professional": "Rewrite in a formal, professional, and authoritative tone."
         }
-        
+
         instruction = tone_instructions.get(data.tone, "Rewrite in a professional tone.")
-        
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"script-rewrite-{current_user['id']}-{uuid.uuid4()}",
             system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें।"
         ).with_model("openai", "gpt-5.2")
-        
+
         user_message = UserMessage(text=f"Rewrite this script in {instruction} tone:\n\n{data.script}")
         response = await chat.send_message(user_message)
-        
+
         return ScriptResponse(script=response)
     except Exception as e:
         logging.error(f"Error rewriting script: {str(e)}")
@@ -462,6 +560,7 @@ async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depend
 @api_router.post("/voice/preview", response_model=VoicePreviewResponse)
 async def preview_voice(data: VoicePreviewRequest, current_user: dict = Depends(get_current_user)):
     try:
+        from emergentintegrations.llm.openai import OpenAITextToSpeech
         tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
         preview_text = data.script[:2000]
         audio_base64 = await tts.generate_speech_base64(
@@ -481,7 +580,7 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
     try:
         if current_user["credits"] < 1:
             raise HTTPException(status_code=400, detail="Insufficient credits")
-        
+
         video = Video(
             user_id=current_user["id"],
             avatar_id=data.avatar_id,
@@ -493,13 +592,13 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
             folder_id=data.folder_id,
             status="generating"
         )
-        
+
         doc = video.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
-        
-        async with httpx.AsyncClient() as client:
-            heygen_response = await client.post(
+
+        async with httpx.AsyncClient() as hclient:
+            heygen_response = await hclient.post(
                 "https://api.heygen.com/v2/video/generate",
                 headers={
                     "X-Api-Key": HEYGEN_API_KEY,
@@ -526,20 +625,20 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
             heygen_response.raise_for_status()
             heygen_data = heygen_response.json()
             video_id = heygen_data.get("data", {}).get("video_id")
-            
+
             await db.videos.update_one(
                 {"id": video.id},
                 {"$set": {"heygen_video_id": video_id}}
             )
-        
+
         await db.users.update_one(
             {"id": current_user["id"]},
             {"$inc": {"credits": -1}}
         )
-        
+
         if isinstance(video.created_at, str):
             video.created_at = datetime.fromisoformat(video.created_at)
-        
+
         return VideoResponse(**video.model_dump())
     except httpx.HTTPStatusError as e:
         logging.error(f"HeyGen API error: {e.response.text}")
@@ -555,11 +654,11 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
         video = await db.videos.find_one({"id": video_id}, {"_id": 0})
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
-        
+
         if video["user_id"] != current_user["id"] and current_user["role"] != "admin":
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # FIX: Always refresh URL for completed videos (signed URLs expire)
+        # Always refresh URL for completed videos — signed URLs expire
         if video["status"] == "completed" and video.get("heygen_video_id"):
             try:
                 async with httpx.AsyncClient(timeout=20.0) as hc:
@@ -582,19 +681,19 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
 
         if video["status"] == "generating" and video.get("heygen_video_id"):
             logging.info(f"Checking HeyGen status for: {video['heygen_video_id']}")
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
+            async with httpx.AsyncClient() as hclient:
+                response = await hclient.get(
                     f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}",
                     headers={"X-Api-Key": HEYGEN_API_KEY},
                     timeout=30.0
                 )
                 response.raise_for_status()
                 status_data = response.json()
-                
+
                 heygen_status = status_data.get("data", {}).get("status")
                 video_url = status_data.get("data", {}).get("video_url")
                 thumbnail_url = status_data.get("data", {}).get("thumbnail_url")
-                
+
                 if heygen_status == "completed" and video_url:
                     await db.videos.update_one(
                         {"id": video_id},
@@ -613,10 +712,10 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
                         {"$set": {"status": "failed"}}
                     )
                     video["status"] = "failed"
-        
+
         if isinstance(video['created_at'], str):
             video['created_at'] = datetime.fromisoformat(video['created_at'])
-        
+
         return VideoResponse(**video)
     except httpx.HTTPStatusError as e:
         logging.error(f"HeyGen status check error: {e.response.text}")
@@ -629,11 +728,28 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
 async def get_videos(current_user: dict = Depends(get_current_user)):
     query = {"user_id": current_user["id"]}
     videos = await db.videos.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    
+
+    # Refresh expired signed URLs for completed videos
     for video in videos:
-        if isinstance(video['created_at'], str):
-            video['created_at'] = datetime.fromisoformat(video['created_at'])
-    
+        if isinstance(video["created_at"], str):
+            video["created_at"] = datetime.fromisoformat(video["created_at"])
+        if video.get("status") == "completed" and video.get("heygen_video_id"):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as hc:
+                    resp = await hc.get(
+                        f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}",
+                        headers={"X-Api-Key": HEYGEN_API_KEY}
+                    )
+                    fresh_url = resp.json().get("data", {}).get("video_url")
+                    if fresh_url and fresh_url != video.get("video_url"):
+                        video["video_url"] = fresh_url
+                        await db.videos.update_one(
+                            {"id": video["id"]},
+                            {"$set": {"video_url": fresh_url}}
+                        )
+            except Exception:
+                pass
+
     return [VideoResponse(**video) for video in videos]
 
 @api_router.get("/videos/{video_id}", response_model=VideoResponse)
@@ -641,13 +757,13 @@ async def get_video(video_id: str, current_user: dict = Depends(get_current_user
     video = await db.videos.find_one({"id": video_id}, {"_id": 0})
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    
+
     if video["user_id"] != current_user["id"] and current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
     if isinstance(video['created_at'], str):
         video['created_at'] = datetime.fromisoformat(video['created_at'])
-    
+
     return VideoResponse(**video)
 
 # ============= FOLDER ROUTES =============
@@ -695,16 +811,17 @@ async def chat_message(data: ChatRequest, current_user: dict = Depends(get_curre
         user_doc = user_msg.model_dump()
         user_doc['created_at'] = user_doc['created_at'].isoformat()
         await db.chat_messages.insert_one(user_doc)
-        
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=data.session_id,
             system_message="You are a helpful AI assistant for JioGen AI Avatar Video Platform. Help users create video scripts by understanding their needs, suggesting improvements, and generating content. Be conversational and helpful."
         ).with_model("openai", "gpt-5.2")
-        
+
         user_message = UserMessage(text=data.message)
         response = await chat.send_message(user_message)
-        
+
         assistant_msg = ChatMessage(
             session_id=data.session_id,
             user_id=current_user["id"],
@@ -714,7 +831,7 @@ async def chat_message(data: ChatRequest, current_user: dict = Depends(get_curre
         assistant_doc = assistant_msg.model_dump()
         assistant_doc['created_at'] = assistant_doc['created_at'].isoformat()
         await db.chat_messages.insert_one(assistant_doc)
-        
+
         return ChatResponse(message=response, session_id=data.session_id)
     except Exception as e:
         logging.error(f"Error in chat: {str(e)}")
@@ -764,7 +881,7 @@ def clean_script_for_tts(text: str) -> str:
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
 
-# ============= HELPER FUNCTION FOR ELEVENLABS =============
+# ============= HELPER: ELEVENLABS → HEYGEN ASSET =============
 
 async def _elevenlabs_to_heygen_asset(
     el_api_key: str,
@@ -775,8 +892,8 @@ async def _elevenlabs_to_heygen_asset(
     similarity_boost: float = 0.75
 ) -> str:
     api_key = el_api_key if el_api_key else ELEVENLABS_API_KEY
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        el_resp = await client.post(
+    async with httpx.AsyncClient(timeout=120.0) as hclient:
+        el_resp = await hclient.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{el_voice_id}",
             headers={
                 "xi-api-key": api_key,
@@ -799,7 +916,7 @@ async def _elevenlabs_to_heygen_asset(
         el_resp.raise_for_status()
         logging.info(f"EL TTS status: {el_resp.status_code}, bytes: {len(el_resp.content)}")
 
-        hg_resp = await client.post(
+        hg_resp = await hclient.post(
             "https://upload.heygen.com/v1/asset",
             headers={
                 "X-Api-Key": HEYGEN_API_KEY,
@@ -819,8 +936,8 @@ async def _elevenlabs_to_heygen_asset(
 @api_router.get("/heygen/voices")
 async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
+        async with httpx.AsyncClient(timeout=30.0) as hclient:
+            resp = await hclient.get(
                 "https://api.heygen.com/v2/voices",
                 headers={"X-Api-Key": HEYGEN_API_KEY}
             )
@@ -834,8 +951,8 @@ async def get_heygen_voices(current_user: dict = Depends(get_current_user)):
 @api_router.post("/heygen/tts-preview")
 async def heygen_tts_preview(data: HeyGenTTSRequest, current_user: dict = Depends(get_current_user)):
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
+        async with httpx.AsyncClient(timeout=30.0) as hclient:
+            resp = await hclient.post(
                 "https://api.heygen.com/v1/audio/text_to_speech",
                 headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                 json={"text": data.script[:500], "voice_id": data.voice_id}
@@ -853,14 +970,14 @@ async def heygen_tts_preview(data: HeyGenTTSRequest, current_user: dict = Depend
 async def voice_script_preview(data: ScriptPreviewRequest, current_user: dict = Depends(get_current_user)):
     try:
         matched_el_voice_id = None
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            el_resp = await client.get(
+        async with httpx.AsyncClient(timeout=30.0) as hclient:
+            el_resp = await hclient.get(
                 "https://api.elevenlabs.io/v1/voices",
                 headers={"xi-api-key": ELEVENLABS_API_KEY}
             )
             el_resp.raise_for_status()
             el_voices = el_resp.json().get("voices", [])
-            
+
             search_name = (data.heygen_voice_name or "").lower().strip()
             for v in el_voices:
                 el_name = v.get("name", "").lower().strip()
@@ -868,13 +985,13 @@ async def voice_script_preview(data: ScriptPreviewRequest, current_user: dict = 
                     matched_el_voice_id = v.get("voice_id")
                     logging.info(f"Script preview matched EL voice: {v.get('name')} -> {matched_el_voice_id}")
                     break
-        
+
         if not matched_el_voice_id:
             raise HTTPException(status_code=400, detail=f"No ElevenLabs voice found matching '{data.heygen_voice_name}'")
-        
+
         preview_text = clean_script_for_tts(data.script)[:2000] if data.script.strip() else "Hello, this is a voice preview."
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            tts_resp = await client.post(
+        async with httpx.AsyncClient(timeout=60.0) as hclient:
+            tts_resp = await hclient.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{matched_el_voice_id}",
                 headers={"xi-api-key": ELEVENLABS_API_KEY, "Accept": "audio/mpeg", "Content-Type": "application/json"},
                 json={
@@ -897,13 +1014,22 @@ async def voice_script_preview(data: ScriptPreviewRequest, current_user: dict = 
 async def get_elevenlabs_voices(data: ElevenLabsVoicesRequest, current_user: dict = Depends(get_current_user)):
     try:
         api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key})
+        async with httpx.AsyncClient(timeout=30.0) as hclient:
+            resp = await hclient.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key})
             if resp.status_code == 401:
                 raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
             resp.raise_for_status()
             raw = resp.json().get("voices", [])
-            voices = [{"voice_id": v.get("voice_id"), "name": v.get("name"), "category": v.get("category", ""), "preview_url": v.get("preview_url"), "labels": v.get("labels", {})} for v in raw]
+            voices = [
+                {
+                    "voice_id": v.get("voice_id"),
+                    "name": v.get("name"),
+                    "category": v.get("category", ""),
+                    "preview_url": v.get("preview_url"),
+                    "labels": v.get("labels", {})
+                }
+                for v in raw
+            ]
             return {"voices": voices, "count": len(voices)}
     except HTTPException:
         raise
@@ -916,11 +1042,20 @@ async def elevenlabs_preview(data: ElevenLabsPreviewRequest, current_user: dict 
     try:
         api_key = data.elevenlabs_api_key if data.elevenlabs_api_key else ELEVENLABS_API_KEY
         text = clean_script_for_tts(data.script)[:2000] if data.script.strip() else "Hello, this is a voice preview."
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
+        async with httpx.AsyncClient(timeout=30.0) as hclient:
+            resp = await hclient.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{data.elevenlabs_voice_id}",
                 headers={"xi-api-key": api_key, "Accept": "audio/mpeg", "Content-Type": "application/json"},
-                json={"text": text, "model_id": data.model_id, "voice_settings": {"stability": data.stability, "similarity_boost": data.similarity_boost, "style": 0.0, "use_speaker_boost": True}}
+                json={
+                    "text": text,
+                    "model_id": data.model_id,
+                    "voice_settings": {
+                        "stability": data.stability,
+                        "similarity_boost": data.similarity_boost,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                }
             )
             if resp.status_code == 401:
                 raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
@@ -1008,7 +1143,7 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                 voice_block = {"type": "audio", "audio_asset_id": asset_id}
                 logging.info(f"Using EL audio asset: {asset_id}")
             else:
-                logging.warning(f"No EL voice match for: {data.heygen_voice_name}, using HeyGen voice")
+                logging.warning(f"No EL voice match for: {data.heygen_voice_name}, falling back to HeyGen voice")
                 voice_block = {
                     "type": "text",
                     "input_text": data.script,
@@ -1027,14 +1162,18 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
             character_block["use_avatar_iv_model"] = True
 
         payload = {
-            "video_inputs": [{"character": character_block, "voice": voice_block, "background": {"type": "color", "value": "#ffffff"}}],
+            "video_inputs": [{
+                "character": character_block,
+                "voice": voice_block,
+                "background": {"type": "color", "value": "#ffffff"}
+            }],
             "dimension": {"width": data.width, "height": data.height},
             "caption": data.enable_captions,
             "test": False
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            hg = await client.post(
+        async with httpx.AsyncClient(timeout=60.0) as hclient:
+            hg = await hclient.post(
                 "https://api.heygen.com/v2/video/generate",
                 headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                 json=payload
@@ -1108,7 +1247,8 @@ async def _poll_heygen_videos():
             logging.error(f"Auto-poll loop error: {e}")
         await _asyncio.sleep(30)
 
-# FIX: include_router BEFORE middleware and startup
+# ============= APP SETUP =============
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -1119,7 +1259,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -1130,7 +1269,6 @@ logger = logging.getLogger(__name__)
 async def shutdown_db_client():
     client.close()
 
-# FIX: Single startup event only
 @app.on_event("startup")
 async def start_polling():
     _asyncio.create_task(_poll_heygen_videos())

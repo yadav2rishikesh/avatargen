@@ -9,6 +9,7 @@ import CreatePage from './pages/CreatePage';
 import HistoryPage from './pages/HistoryPage';
 import CreditsPage from './pages/CreditsPage';
 import AdminPage from './pages/AdminPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -40,6 +41,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route
             path="/dashboard"
             element={
@@ -51,7 +53,6 @@ function App() {
             <Route index element={<Navigate to="/dashboard/avatars" replace />} />
             <Route path="avatars" element={<AvatarsPage />} />
             <Route path="create" element={<CreatePage />} />
-            <Route path="history" element={<HistoryPage />} />
             <Route path="credits" element={<CreditsPage />} />
           </Route>
           <Route
