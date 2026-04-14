@@ -40,7 +40,10 @@ export default function CreatePage() {
     else if (chars <= 450) setDuration('30');
     else if (chars <= 800) setDuration('60');
     else if (chars <= 1200) setDuration('90');
-    else setDuration('120');
+    else if (chars <= 1800) setDuration('120');
+    else if (chars <= 2800) setDuration('180');
+    else if (chars <= 4000) setDuration('240');
+    else setDuration('300');
   }, [script]);
   const [title, setTitle] = useState('');
   
@@ -472,7 +475,7 @@ export default function CreatePage() {
                     className="resize-none font-mono text-sm"
                   />
                   {(() => {
-                    const charLimits = { '10': 150, '20': 270, '30': 400, '60': 800, '90': 1200 };
+                    const charLimits = { '10': 150, '20': 270, '30': 400, '60': 800, '90': 1200, '120': 1800, '180': 2800, '240': 4000, '300': 5000 };
                     const limit = charLimits[duration] || 400;
                     const count = script.length;
                     const isOver = count > limit;
@@ -516,6 +519,10 @@ export default function CreatePage() {
                       <SelectItem value="30">30 seconds</SelectItem>
                       <SelectItem value="60">60 seconds</SelectItem>
                       <SelectItem value="90">90 seconds</SelectItem>
+                      <SelectItem value="120">2 minutes</SelectItem>
+                      <SelectItem value="180">3 minutes</SelectItem>
+                      <SelectItem value="240">4 minutes</SelectItem>
+                      <SelectItem value="300">5 minutes</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

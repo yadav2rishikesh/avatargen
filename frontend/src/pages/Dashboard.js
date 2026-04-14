@@ -7,10 +7,26 @@ import ChatbotPanel from '../components/ChatbotPanel';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
+  const [hasSelectedAvatar, setHasSelectedAvatar] = React.useState(false);
+
+  // Listen for avatar selection changes
+  React.useEffect(() => {
+    const checkAvatar = () => {
+      setHasSelectedAvatar(!!localStorage.getItem('selectedAvatarId'));
+    };
+    window.addEventListener('storage', checkAvatar);
+    window.addEventListener('avatarSelected', checkAvatar);
+    return () => {
+      window.removeEventListener('storage', checkAvatar);
+      window.removeEventListener('avatarSelected', checkAvatar);
+    };
+  }, []);
   const navigate = useNavigate();
   const location = useLocation();
 
   const handleLogout = () => {
+    localStorage.removeItem('selectedAvatarId');
+    setHasSelectedAvatar(false);
     logout();
     navigate('/login');
   };
@@ -19,7 +35,7 @@ export default function Dashboard() {
     { path: '/dashboard/avatars', label: 'Avatars', icon: Image },
     { path: '/dashboard/create', label: 'Create', icon: PlusCircle },
     { path: '/dashboard/history', label: 'History', icon: History },
-    { path: '/dashboard/credits', label: 'Credits', icon: Coins },
+    { path: '/dashboard/credits', label: 'Usage', icon: Coins },
   ];
 
   if (user?.role === 'admin') {
@@ -48,7 +64,19 @@ export default function Dashboard() {
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
-                return (
+                const isCreateDisabled = item.label === 'Create' && !hasSelectedAvatar;
+                return isCreateDisabled ? (
+                  <div key={item.path} title="Please select an avatar first">
+                    <Button
+                      variant="ghost"
+                      disabled
+                      className="gap-2 text-slate-300 cursor-not-allowed opacity-50"
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </Button>
+                  </div>
+                ) : (
                   <Link key={item.path} to={item.path}>
                     <Button
                       data-testid={`nav-${item.label.toLowerCase()}`}
@@ -69,13 +97,7 @@ export default function Dashboard() {
 
             {/* User Info & Logout */}
             <div className="flex items-center gap-4">
-              <div className="hidden sm:flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-lg">
-                <Coins className="h-5 w-5 text-amber-600" />
-                <span data-testid="user-credits" className="font-semibold text-slate-900">
-                  {user?.credits || 0}
-                </span>
-                <span className="text-sm text-slate-600">credits</span>
-              </div>
+
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-medium text-slate-900">{user?.email}</p>
                 <p className="text-xs text-slate-500 capitalize">{user?.role}</p>
@@ -100,7 +122,20 @@ export default function Dashboard() {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
-            return (
+            const isCreateDisabled = item.label === 'Create' && !hasSelectedAvatar;
+            return isCreateDisabled ? (
+              <div key={item.path} title="Please select an avatar first">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled
+                  className="gap-2 whitespace-nowrap text-slate-300 opacity-50 cursor-not-allowed"
+                >
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </Button>
+              </div>
+            ) : (
               <Link key={item.path} to={item.path}>
                 <Button
                   variant={isActive ? 'default' : 'ghost'}

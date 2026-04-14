@@ -22,6 +22,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      localStorage.removeItem('selectedAvatarId');
       await login(email, password);
       toast.success('Welcome back!');
       navigate('/dashboard');

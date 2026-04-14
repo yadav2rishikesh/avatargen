@@ -33,6 +33,8 @@ export default function AvatarsPage() {
 
   const handleNext = () => {
     if (selectedAvatar) {
+      localStorage.setItem('selectedAvatarId', selectedAvatar.avatar_id);
+      window.dispatchEvent(new Event('avatarSelected'));
       navigate('/dashboard/create', { state: { avatar: selectedAvatar } });
     } else {
       toast.error('Please select an avatar');
