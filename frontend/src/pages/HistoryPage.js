@@ -29,6 +29,8 @@ export default function HistoryPage() {
 
   const fetchData = async () => {
     try {
+      const token = localStorage.getItem('token');
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       const [videosRes, foldersRes] = await Promise.all([
         axios.get(`${API_URL}/videos`),
         axios.get(`${API_URL}/folders`),
@@ -48,7 +50,8 @@ export default function HistoryPage() {
       return;
     }
     try {
-      const response = await axios.post(`${API_URL}/folders`, { name: newFolderName });
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_URL}/folders`, { name: newFolderName }, { headers: { Authorization: `Bearer ${token}` } });
       setFolders([response.data, ...folders]);
       setNewFolderName('');
       setShowCreateFolder(false);
@@ -273,7 +276,7 @@ export default function HistoryPage() {
 
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-slate-400">
-                        {format(new Date(video.created_at), 'dd MMM yyyy')}
+                        {video.created_at ? format(new Date(video.created_at), 'dd MMM yyyy') : 'N/A'}
                       </span>
                       <div className="flex items-center gap-2">
                         {video.status === 'completed' && (
@@ -342,7 +345,7 @@ export default function HistoryPage() {
                 <div><p className="text-sm text-slate-500">Avatar</p><p className="font-medium">{selectedVideo.avatar_name}</p></div>
                 <div><p className="text-sm text-slate-500">Language</p><p className="font-medium">{selectedVideo.language}</p></div>
                 <div><p className="text-sm text-slate-500">Duration</p><p className="font-medium">{selectedVideo.duration} seconds</p></div>
-                <div><p className="text-sm text-slate-500">Created</p><p className="font-medium">{format(new Date(selectedVideo.created_at), 'PPP')}</p></div>
+                <div><p className="text-sm text-slate-500">Created</p><p className="font-medium">{selectedVideo.created_at ? format(new Date(selectedVideo.created_at), 'PPP') : 'N/A'}</p></div>
               </div>
 
               <div>

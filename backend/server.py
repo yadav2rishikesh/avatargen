@@ -218,7 +218,7 @@ class VideoCreateAdvanced(BaseModel):
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     el_stability: float = 0.5
     el_similarity_boost: float = 0.75
-    avatar_engine: str = "standard"
+    avatar_engine: str = "avatar_iv"
     width: int = 1920
     height: int = 1080
     enable_captions: bool = False
@@ -472,13 +472,13 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
             response = await hclient.get("https://api.heygen.com/v2/avatars", headers={"X-Api-Key": HEYGEN_API_KEY}, timeout=30.0)
             response.raise_for_status()
             all_avatars = response.json().get("data", {}).get("avatars", [])
-            seen_ids = set()
             filtered_avatars = []
+            seen_ids = set()
             for avatar in all_avatars:
                 avatar_id = avatar.get("avatar_id")
-                if avatar_id in JIO_AVATARS and avatar_id not in seen_ids:
+                if avatar_id and avatar_id not in seen_ids:
                     seen_ids.add(avatar_id)
-                    avatar["display_name"] = JIO_AVATARS[avatar_id]
+                    avatar["display_name"] = JIO_AVATARS.get(avatar_id, avatar.get("avatar_name", ""))
                     filtered_avatars.append(avatar)
             return {"avatars": filtered_avatars}
     except Exception as e:
@@ -571,19 +571,25 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
 
+        voice_id = data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8"
         async with httpx.AsyncClient() as hclient:
             heygen_response = await hclient.post(
-                "https://api.heygen.com/v2/video/generate",
-                headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                "https://api.heygen.com/v3/videos",
+                headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                 json={
-                    "video_inputs": [{"character": {"type": "avatar", "avatar_id": data.avatar_id, "avatar_style": "normal"}, "voice": {"type": "text", "input_text": data.script, "voice_id": "1bd001e7e50f421d891986aad5158bc8"}}],
-                    "dimension": {"width": 1280, "height": 720},
-                    "test": True
+                    "type": "avatar",
+                    "avatar_id": data.avatar_id,
+                    "script": data.script,
+                    "voice_id": voice_id,
+                    "title": data.title,
+                    "resolution": "1080p",
+                    "aspect_ratio": "16:9"
                 },
-                timeout=30.0
+                timeout=60.0
             )
             heygen_response.raise_for_status()
-            video_id = heygen_response.json().get("data", {}).get("video_id")
+            resp_data = heygen_response.json().get("data", {})
+            video_id = resp_data.get("video_id") or resp_data.get("id")
             await db.videos.update_one({"id": video.id}, {"$set": {"heygen_video_id": video_id}})
 
         if isinstance(video.created_at, str):
@@ -612,7 +618,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
         if video["status"] == "completed" and video.get("heygen_video_id"):
             try:
                 async with httpx.AsyncClient(timeout=20.0) as hc:
-                    resp = await hc.get(f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}", headers={"X-Api-Key": HEYGEN_API_KEY})
+                    resp = await hc.get(f"https://api.heygen.com/v3/videos/{video['heygen_video_id']}", headers={"x-api-key": HEYGEN_API_KEY})
                     fresh_url = resp.json().get("data", {}).get("video_url")
                     if fresh_url:
                         video["video_url"] = fresh_url
@@ -625,7 +631,7 @@ async def get_video_status(video_id: str, current_user: dict = Depends(get_curre
 
         if video["status"] == "generating" and video.get("heygen_video_id"):
             async with httpx.AsyncClient() as hclient:
-                response = await hclient.get(f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}", headers={"X-Api-Key": HEYGEN_API_KEY}, timeout=30.0)
+                response = await hclient.get(f"https://api.heygen.com/v3/videos/{video['heygen_video_id']}", headers={"x-api-key": HEYGEN_API_KEY}, timeout=30.0)
                 response.raise_for_status()
                 status_data = response.json().get("data", {})
                 heygen_status = status_data.get("status")
@@ -658,7 +664,7 @@ async def get_videos(current_user: dict = Depends(get_current_user)):
         if video.get("status") == "completed" and video.get("heygen_video_id"):
             try:
                 async with httpx.AsyncClient(timeout=15.0) as hc:
-                    resp = await hc.get(f"https://api.heygen.com/v1/video_status.get?video_id={video['heygen_video_id']}", headers={"X-Api-Key": HEYGEN_API_KEY})
+                    resp = await hc.get(f"https://api.heygen.com/v3/videos/{video['heygen_video_id']}", headers={"x-api-key": HEYGEN_API_KEY})
                     fresh_url = resp.json().get("data", {}).get("video_url")
                     if fresh_url and fresh_url != video.get("video_url"):
                         video["video_url"] = fresh_url
@@ -1000,20 +1006,60 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
         else:
             voice_block = {"type": "text", "input_text": data.script, "voice_id": "1bd001e7e50f421d891986aad5158bc8", "speed": 1.0}
 
-        character_block = {"type": "avatar", "avatar_id": data.avatar_id, "avatar_style": "normal"}
-        if data.avatar_engine == "avatar_v":
-            character_block["use_avatar_v_model"] = True
-        elif data.avatar_engine == "avatar_iv":
-            character_block["use_avatar_iv_model"] = True
-
         async with httpx.AsyncClient(timeout=60.0) as hclient:
-            hg = await hclient.post(
-                "https://api.heygen.com/v2/video/generate",
-                headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
-                json={"video_inputs": [{"character": character_block, "voice": voice_block, "background": {"type": "color", "value": "#ffffff"}}], "dimension": {"width": data.width, "height": data.height}, "caption": data.enable_captions, "test": False}
-            )
-            hg.raise_for_status()
-            heygen_video_id = hg.json().get("data", {}).get("video_id")
+            # ============================================================
+            # ENGINE ROUTING LOGIC
+            # standard  → v2 API, no flags
+            # avatar_iv → v2 API + use_avatar_iv_model: True
+            # avatar_v  → v3 API (HeyGen auto-uses Avatar V if avatar supports it)
+            # ============================================================
+
+            if data.avatar_engine in ("avatar_v",):
+                # V3 API — Avatar V (server-side engine selection by HeyGen)
+                v3_payload = {
+                    "type": "avatar",
+                    "avatar_id": data.avatar_id,
+                    "script": data.script,
+                    "title": data.title,
+                    "resolution": "1080p",
+                    "aspect_ratio": "16:9"
+                }
+                if isinstance(voice_block, dict) and voice_block.get("type") == "audio":
+                    v3_payload["audio_id"] = voice_block.get("audio_asset_id")
+                else:
+                    v3_payload["voice_id"] = data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8"
+
+                hg = await hclient.post(
+                    "https://api.heygen.com/v3/videos",
+                    headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                    json=v3_payload
+                )
+                hg.raise_for_status()
+                resp_data = hg.json().get("data", {})
+                heygen_video_id = resp_data.get("video_id") or resp_data.get("id")
+
+            else:
+                # V2 API — Standard or Avatar IV
+                character_block = {"type": "avatar", "avatar_id": data.avatar_id, "avatar_style": "normal"}
+                if data.avatar_engine == "avatar_iv":
+                    character_block["use_avatar_iv_model"] = True
+
+                hg = await hclient.post(
+                    "https://api.heygen.com/v2/video/generate",
+                    headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                    json={
+                        "video_inputs": [{
+                            "character": character_block,
+                            "voice": voice_block,
+                            "background": {"type": "color", "value": "#ffffff"}
+                        }],
+                        "dimension": {"width": data.width, "height": data.height},
+                        "caption": data.enable_captions,
+                        "test": False
+                    }
+                )
+                hg.raise_for_status()
+                heygen_video_id = hg.json().get("data", {}).get("video_id")
 
         await db.videos.update_one({"id": video.id}, {"$set": {"heygen_video_id": heygen_video_id}})
         if isinstance(video.created_at, str):
@@ -1049,7 +1095,7 @@ async def _poll_heygen_videos():
                     continue
                 try:
                     async with httpx.AsyncClient(timeout=20.0) as hc:
-                        resp = await hc.get(f"https://api.heygen.com/v1/video_status.get?video_id={hg_id}", headers={"X-Api-Key": HEYGEN_API_KEY})
+                        resp = await hc.get(f"https://api.heygen.com/v3/videos/{hg_id}", headers={"x-api-key": HEYGEN_API_KEY})
                         data = resp.json().get("data", {})
                         status = data.get("status")
                         video_url = data.get("video_url")

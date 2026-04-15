@@ -53,6 +53,7 @@ function App() {
             <Route index element={<Navigate to="/dashboard/avatars" replace />} />
             <Route path="avatars" element={<AvatarsPage />} />
             <Route path="create" element={<CreatePage />} />
+            <Route path="history" element={<HistoryPage />} />
             <Route path="credits" element={<CreditsPage />} />
           </Route>
           <Route
