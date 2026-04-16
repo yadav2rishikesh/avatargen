@@ -10,6 +10,34 @@ import { format } from 'date-fns';
 
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+
+function ProgressBar({ videoId, createdAt }) {
+  const [pct, setPct] = React.useState(5);
+  React.useEffect(() => {
+    const start = createdAt ? new Date(createdAt).getTime() : Date.now();
+    const tick = () => {
+      const elapsed = (Date.now() - start) / 1000;
+      // Simulate: reaches ~87% in 180s
+      const p = Math.min(87, Math.round(5 + (elapsed / 180) * 82));
+      setPct(p);
+    };
+    tick();
+    const interval = setInterval(tick, 3000);
+    return () => clearInterval(interval);
+  }, [videoId, createdAt]);
+  return (
+    <div style={{ marginBottom:10 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+        <span style={{ fontSize:10, fontWeight:700, color:'rgba(96,165,250,0.8)', letterSpacing:'0.5px' }}>PROCESSING</span>
+        <span style={{ fontSize:11, fontWeight:700, color:'#60a5fa' }}>{pct}% Ready</span>
+      </div>
+      <div style={{ height:3, background:'rgba(96,165,250,0.08)', borderRadius:50, overflow:'hidden' }}>
+        <div style={{ height:'100%', width:`${pct}%`, borderRadius:50, background:'linear-gradient(90deg,#3b82f6,#60a5fa,#93c5fd)', boxShadow:'0 0 6px rgba(96,165,250,0.5)', transition:'width 1s ease' }} />
+      </div>
+    </div>
+  );
+}
+
 export default function HistoryPage() {
   const [videos,            setVideos]            = useState([]);
   const [folders,           setFolders]           = useState([]);
@@ -382,15 +410,7 @@ export default function HistoryPage() {
 
                     {/* Progress bar */}
                     {video.status === 'generating' && (
-                      <div style={{ marginBottom:10 }}>
-                        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-                          <span style={{ fontSize:10, fontWeight:700, color:'rgba(96,165,250,0.8)', letterSpacing:'0.5px' }}>PROCESSING</span>
-                          <span style={{ fontSize:10, color:'rgba(96,165,250,0.5)' }}>HeyGen rendering...</span>
-                        </div>
-                        <div style={{ height:3, background:'rgba(96,165,250,0.08)', borderRadius:50, overflow:'hidden' }}>
-                          <div style={{ height:'100%', borderRadius:50, background:'linear-gradient(90deg,#3b82f6,#60a5fa,#93c5fd)', boxShadow:'0 0 6px rgba(96,165,250,0.5)', animation:'hp-prog 180s ease-out forwards' }} />
-                        </div>
-                      </div>
+                      <ProgressBar videoId={video.id} createdAt={video.created_at} />
                     )}
                     {/* Script preview */}
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', margin: '0 0 12px', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
