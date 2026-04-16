@@ -74,7 +74,8 @@ export default function ChatbotPanel() {
         <Button
           data-testid="chatbot-open-button"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl bg-primary hover:bg-primary/90 z-50"
+            className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl z-50"
+            style={{background:"linear-gradient(135deg,#c07818,#e0a039)"}}
           size="icon"
         >
           <MessageCircle className="h-6 w-6" />
@@ -88,7 +89,7 @@ export default function ChatbotPanel() {
           className="fixed bottom-6 right-6 w-96 h-[600px] shadow-2xl z-50 flex flex-col border-slate-200"
         >
           {/* Header */}
-          <div className="bg-primary text-white p-4 rounded-t-xl flex items-center justify-between">
+          <div className="flex items-center justify-between p-4 rounded-t-xl" style={{background:"linear-gradient(135deg,#c07818,#e0a039)"}}>
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 bg-white/20 rounded-full flex items-center justify-center">
                 <Bot className="h-5 w-5" />

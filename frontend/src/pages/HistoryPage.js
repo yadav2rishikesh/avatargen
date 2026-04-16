@@ -11,15 +11,15 @@ import { format } from 'date-fns';
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function HistoryPage() {
-  const [videos, setVideos] = useState([]);
-  const [folders, setFolders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedVideo, setSelectedVideo] = useState(null);
-  const [showCreateFolder, setShowCreateFolder] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [selectedFolder, setSelectedFolder] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [videos,            setVideos]            = useState([]);
+  const [folders,           setFolders]           = useState([]);
+  const [loading,           setLoading]           = useState(true);
+  const [selectedVideo,     setSelectedVideo]     = useState(null);
+  const [showCreateFolder,  setShowCreateFolder]  = useState(false);
+  const [newFolderName,     setNewFolderName]     = useState('');
+  const [selectedFolder,    setSelectedFolder]    = useState(null);
+  const [searchTerm,        setSearchTerm]        = useState('');
+  const [statusFilter,      setStatusFilter]      = useState('all');
 
   useEffect(() => {
     fetchData();
@@ -45,13 +45,14 @@ export default function HistoryPage() {
   };
 
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) {
-      toast.error('Please enter a folder name');
-      return;
-    }
+    if (!newFolderName.trim()) { toast.error('Please enter a folder name'); return; }
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post(`${API_URL}/folders`, { name: newFolderName }, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.post(
+        `${API_URL}/folders`,
+        { name: newFolderName },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       setFolders([response.data, ...folders]);
       setNewFolderName('');
       setShowCreateFolder(false);
@@ -61,7 +62,6 @@ export default function HistoryPage() {
     }
   };
 
-  // Filter videos
   const filteredVideos = videos
     .filter(v => selectedFolder ? v.folder_id === selectedFolder : true)
     .filter(v => statusFilter === 'all' ? true : v.status === statusFilter)
@@ -72,233 +72,347 @@ export default function HistoryPage() {
     );
 
   const counts = {
-    all: videos.length,
-    completed: videos.filter(v => v.status === 'completed').length,
+    all:        videos.length,
+    completed:  videos.filter(v => v.status === 'completed').length,
     generating: videos.filter(v => v.status === 'generating').length,
-    failed: videos.filter(v => v.status === 'failed').length,
+    failed:     videos.filter(v => v.status === 'failed').length,
   };
 
-  const getStatusBadge = (status) => {
-    const styles = {
-      completed: 'bg-green-100 text-green-700',
-      failed: 'bg-red-100 text-red-700',
-      generating: 'bg-blue-100 text-blue-700',
-      queued: 'bg-amber-100 text-amber-700',
-    };
-    const labels = {
-      completed: 'Done',
-      failed: 'Failed',
-      generating: 'Processing',
-      queued: 'Queued',
-    };
-    return { style: styles[status] || styles.queued, label: labels[status] || status };
-  };
+  const getStatusConfig = (status) => ({
+    completed:  { label: 'Done',       bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  color: '#4ade80' },
+    failed:     { label: 'Failed',     bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.3)',  color: '#f87171' },
+    generating: { label: 'Processing', bg: 'rgba(96,165,250,0.12)', border: 'rgba(96,165,250,0.3)', color: '#60a5fa' },
+    queued:     { label: 'Queued',     bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)', color: '#fbbf24' },
+  }[status] || { label: status, bg: 'rgba(255,255,255,0.06)', border: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' });
 
   const getStatusIcon = (status) => {
+    const size = 16;
     switch (status) {
-      case 'completed': return <CheckCircle className="h-5 w-5 text-green-600" />;
-      case 'failed': return <XCircle className="h-5 w-5 text-red-600" />;
-      case 'generating': return <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />;
-      default: return <Clock className="h-5 w-5 text-amber-600" />;
+      case 'completed':  return <CheckCircle size={size} color="#4ade80" />;
+      case 'failed':     return <XCircle     size={size} color="#f87171" />;
+      case 'generating': return <Loader2     size={size} color="#60a5fa" style={{ animation: 'hp-spin 1s linear infinite' }} />;
+      default:           return <Clock       size={size} color="#fbbf24" />;
     }
   };
 
   if (loading) {
     return (
-      <div className="min-h-[calc(100vh-73px)] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#05050e' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 44, height: 44, borderRadius: '50%', border: '2px solid rgba(224,160,57,0.1)', borderTopColor: '#e0a039', animation: 'hp-spin 0.8s linear infinite', margin: '0 auto 14px' }} />
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)', fontWeight: 300, letterSpacing: '0.5px' }}>Loading...</p>
+        </div>
+        <style>{`@keyframes hp-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
       </div>
     );
   }
 
   return (
-    <div className="min-h-[calc(100vh-73px)] flex bg-slate-50">
+    <div style={{ minHeight: 'calc(100vh - 65px)', background: '#05050e', display: 'flex', fontFamily: '-apple-system,BlinkMacSystemFont,sans-serif', position: 'relative' }}>
 
-      {/* Left Sidebar — Folders */}
-      <aside className="w-56 bg-white border-r border-slate-200 p-4 flex flex-col gap-2">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-semibold text-slate-800 text-sm">Folders</h2>
-          <button onClick={() => setShowCreateFolder(true)} className="text-slate-400 hover:text-primary">
-            <FolderPlus className="h-4 w-4" />
+      {/* Background */}
+      <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(ellipse 60% 40% at 20% 50%, rgba(224,160,57,0.04), transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
+
+      <style>{`
+        @keyframes hp-spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+        @keyframes hp-ping  { 0%,100%{transform:scale(1);opacity:0.8} 50%{transform:scale(1.5);opacity:0} }
+        @keyframes hp-fadein{ from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+        .hp-folder-btn { transition: all 0.18s; cursor: pointer; border: none; width: 100%; text-align: left; font-family: inherit; }
+        .hp-folder-btn:hover { background: rgba(255,255,255,0.06) !important; }
+
+        .hp-filter-btn { transition: all 0.18s; cursor: pointer; border: none; font-family: inherit; white-space: nowrap; }
+        .hp-filter-btn:hover { border-color: rgba(255,255,255,0.18) !important; }
+
+        .hp-card { transition: transform 0.28s cubic-bezier(0.4,0,0.2,1), box-shadow 0.28s; cursor: pointer; animation: hp-fadein 0.35s ease both; }
+        .hp-card:hover { transform: translateY(-5px) scale(1.01) !important; box-shadow: 0 20px 56px rgba(0,0,0,0.55), 0 0 0 1px rgba(224,160,57,0.12) !important; }
+        .hp-card:hover .hp-thumb-img { transform: scale(1.06) !important; }
+        .hp-card:hover .hp-play-overlay { opacity: 1 !important; }
+
+        .hp-thumb-img { transition: transform 0.5s cubic-bezier(0.4,0,0.2,1) !important; }
+
+        .hp-icon-btn { transition: all 0.18s; cursor: pointer; border: none; background: transparent; padding: 6px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: inherit; }
+        .hp-icon-btn:hover { background: rgba(255,255,255,0.08) !important; }
+
+        .hp-search:focus { border-color: rgba(224,160,57,0.4) !important; box-shadow: 0 0 0 3px rgba(224,160,57,0.08) !important; background: rgba(255,255,255,0.07) !important; outline: none !important; }
+
+        .hp-refresh:hover { border-color: rgba(224,160,57,0.35) !important; color: #e0a039 !important; transform: rotate(30deg) !important; }
+
+        [role="dialog"] { background: #0d0d1c !important; border: 1px solid rgba(255,255,255,0.08) !important; }
+        [role="dialog"] * { color: inherit !important; }
+        .hp-dialog-input { background: rgba(255,255,255,0.05) !important; border: 1px solid rgba(255,255,255,0.08) !important; color: #fff !important; border-radius: 10px !important; }
+        .hp-dialog-input:focus { border-color: rgba(224,160,57,0.4) !important; outline: none !important; }
+        .hp-dialog-input::placeholder { color: rgba(255,255,255,0.2) !important; }
+      `}</style>
+
+      {/* ── Left Sidebar ── */}
+      <aside style={{
+        width: 220,
+        background: 'rgba(255,255,255,0.03)',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        padding: '24px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        position: 'relative',
+        zIndex: 1,
+        flexShrink: 0,
+      }}>
+        {/* Sidebar header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '0 6px' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', letterSpacing: '1.2px', textTransform: 'uppercase' }}>
+            Folders
+          </span>
+          <button
+            onClick={() => setShowCreateFolder(true)}
+            className="hp-icon-btn"
+            style={{ color: 'rgba(255,255,255,0.3)', padding: 4 }}
+          >
+            <FolderPlus size={14} />
           </button>
         </div>
 
+        {/* All Videos */}
         <button
+          className="hp-folder-btn"
           onClick={() => setSelectedFolder(null)}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-            !selectedFolder ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-100'
-          }`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 9,
+            padding: '9px 12px', borderRadius: 10,
+            background: !selectedFolder ? 'rgba(224,160,57,0.1)' : 'transparent',
+            border: !selectedFolder ? '1px solid rgba(224,160,57,0.2)' : '1px solid transparent',
+          }}
         >
-          <Folder className="h-4 w-4" />
-          All Videos ({videos.length})
+          <Folder size={14} color={!selectedFolder ? '#e0a039' : 'rgba(255,255,255,0.4)'} />
+          <span style={{ fontSize: 13, fontWeight: !selectedFolder ? 700 : 400, color: !selectedFolder ? '#e0a039' : 'rgba(255,255,255,0.55)', flex: 1 }}>
+            All Videos
+          </span>
+          <span style={{ fontSize: 11, color: !selectedFolder ? 'rgba(224,160,57,0.7)' : 'rgba(255,255,255,0.25)', fontWeight: 600 }}>
+            {videos.length}
+          </span>
         </button>
 
+        {/* Folder list */}
         {folders.map(folder => (
           <button
             key={folder.id}
+            className="hp-folder-btn"
             onClick={() => setSelectedFolder(folder.id)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-              selectedFolder === folder.id ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-100'
-            }`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 9,
+              padding: '9px 12px', borderRadius: 10,
+              background: selectedFolder === folder.id ? 'rgba(224,160,57,0.1)' : 'transparent',
+              border: selectedFolder === folder.id ? '1px solid rgba(224,160,57,0.2)' : '1px solid transparent',
+            }}
           >
-            <Folder className="h-4 w-4" />
-            {folder.name} ({videos.filter(v => v.folder_id === folder.id).length})
+            <Folder size={14} color={selectedFolder === folder.id ? '#e0a039' : 'rgba(255,255,255,0.4)'} />
+            <span style={{ fontSize: 13, fontWeight: selectedFolder === folder.id ? 700 : 400, color: selectedFolder === folder.id ? '#e0a039' : 'rgba(255,255,255,0.55)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {folder.name}
+            </span>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontWeight: 600 }}>
+              {videos.filter(v => v.folder_id === folder.id).length}
+            </span>
           </button>
         ))}
 
+        {/* New folder button */}
         <button
+          className="hp-folder-btn"
           onClick={() => setShowCreateFolder(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-primary mt-1"
+          style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 12px', borderRadius: 10, border: '1px dashed rgba(255,255,255,0.1)', marginTop: 8, background: 'transparent' }}
         >
-          <FolderPlus className="h-4 w-4" />
-          New Folder
+          <FolderPlus size={14} color="rgba(255,255,255,0.25)" />
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>New Folder</span>
         </button>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-6 md:p-8 overflow-auto">
+      {/* ── Main Content ── */}
+      <main style={{ flex: 1, padding: '28px 36px', overflowY: 'auto', position: 'relative', zIndex: 1 }}>
 
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900 mb-1">
-            Your <span className="text-primary">Creations</span>
+        <div style={{ marginBottom: 24 }}>
+          <h1 style={{ fontSize: 30, fontWeight: 800, color: '#fff', letterSpacing: '-0.8px', margin: '0 0 4px' }}>
+            Your{' '}
+            <span style={{ background: 'linear-gradient(135deg,#f5d880,#e0a039,#c07818)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+              Creations
+            </span>
           </h1>
+          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)', margin: 0, fontWeight: 300 }}>
+            {counts.all} videos · {counts.completed} completed · {counts.generating} processing
+          </p>
         </div>
 
-        {/* Search + Status Filter Row */}
-        <div className="flex flex-col md:flex-row gap-4 mb-6 items-start md:items-center justify-between">
+        {/* Search + Filter Row */}
+        <div style={{ display: 'flex', gap: 14, marginBottom: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+
           {/* Search */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <div style={{ position: 'relative', flex: 1, maxWidth: 380 }}>
+            <Search size={14} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.25)', pointerEvents: 'none' }} />
             <input
               type="text"
+              className="hp-search"
               placeholder="Search by name, script or avatar..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white"
+              style={{ width: '100%', paddingLeft: 36, paddingRight: 14, paddingTop: 9, paddingBottom: 9, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 50, fontSize: 13, color: '#fff', fontFamily: 'inherit', boxSizing: 'border-box' }}
             />
           </div>
 
-          {/* Status Filter Tabs */}
-          <div className="flex gap-2 flex-wrap">
+          {/* Status Filter Pills */}
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
             {[
-              { key: 'all', label: 'All', count: counts.all },
-              { key: 'completed', label: 'Completed', count: counts.completed },
-              { key: 'generating', label: 'Processing', count: counts.generating },
-              { key: 'failed', label: 'Failed', count: counts.failed },
-            ].map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setStatusFilter(tab.key)}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all border ${
-                  statusFilter === tab.key
-                    ? tab.key === 'completed' ? 'bg-green-100 text-green-700 border-green-300'
-                      : tab.key === 'generating' ? 'bg-blue-100 text-blue-700 border-blue-300'
-                      : tab.key === 'failed' ? 'bg-red-100 text-red-700 border-red-300'
-                      : 'bg-primary text-white border-primary'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                {tab.label} ({tab.count})
-              </button>
-            ))}
+              { key: 'all',        label: 'All',        count: counts.all,        activeColor: '#e0a039',  activeBg: 'rgba(224,160,57,0.12)',  activeBorder: 'rgba(224,160,57,0.35)' },
+              { key: 'completed',  label: 'Completed',  count: counts.completed,  activeColor: '#4ade80',  activeBg: 'rgba(34,197,94,0.1)',    activeBorder: 'rgba(34,197,94,0.3)' },
+              { key: 'generating', label: 'Processing', count: counts.generating, activeColor: '#60a5fa',  activeBg: 'rgba(96,165,250,0.1)',   activeBorder: 'rgba(96,165,250,0.3)' },
+              { key: 'failed',     label: 'Failed',     count: counts.failed,     activeColor: '#f87171',  activeBg: 'rgba(239,68,68,0.1)',    activeBorder: 'rgba(239,68,68,0.3)' },
+            ].map(tab => {
+              const isActive = statusFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  className="hp-filter-btn"
+                  onClick={() => setStatusFilter(tab.key)}
+                  style={{
+                    padding: '7px 16px', borderRadius: 50, fontSize: 12, fontWeight: isActive ? 700 : 500,
+                    color:       isActive ? tab.activeColor : 'rgba(255,255,255,0.4)',
+                    background:  isActive ? tab.activeBg    : 'rgba(255,255,255,0.04)',
+                    border:      `1px solid ${isActive ? tab.activeBorder : 'rgba(255,255,255,0.08)'}`,
+                  }}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              );
+            })}
 
+            {/* Refresh */}
             <button
+              className="hp-filter-btn hp-refresh"
               onClick={fetchData}
-              className="px-3 py-1.5 rounded-full text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:border-primary hover:text-primary transition-all"
+              style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', transition: 'all 0.22s' }}
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw size={13} />
             </button>
           </div>
         </div>
 
-        {/* Videos Grid */}
+        {/* ── Video Grid ── */}
         {filteredVideos.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-slate-400 text-lg">No videos found</p>
-            <p className="text-slate-300 text-sm mt-1">Try a different filter or create a new video</p>
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <div style={{ width: 60, height: 60, borderRadius: 16, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <Play size={24} color="rgba(255,255,255,0.15)" />
+            </div>
+            <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.3)', margin: '0 0 6px', fontWeight: 500 }}>No videos found</p>
+            <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.15)', margin: 0, fontWeight: 300 }}>Try a different filter or create a new video</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredVideos.map(video => {
-              const { style, label } = getStatusBadge(video.status);
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
+            {filteredVideos.map((video, i) => {
+              const sc = getStatusConfig(video.status);
               return (
                 <div
                   key={video.id}
+                  className="hp-card"
                   onClick={() => setSelectedVideo(video)}
-                  className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer border border-slate-100 group"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 18,
+                    overflow: 'hidden',
+                    boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+                    animationDelay: `${i * 0.04}s`,
+                  }}
                 >
                   {/* Thumbnail */}
-                  <div className="aspect-video bg-slate-100 relative overflow-hidden">
+                  <div style={{ aspectRatio: '16/9', position: 'relative', overflow: 'hidden', background: '#0a0a14' }}>
                     {video.thumbnail_url ? (
                       <img
+                        className="hp-thumb-img"
                         src={video.thumbnail_url}
                         alt={video.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary to-blue-700">
-                        <Play className="h-10 w-10 text-white opacity-50" />
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,rgba(224,160,57,0.12),rgba(96,165,250,0.08))' }}>
+                        <Play size={32} color="rgba(255,255,255,0.18)" />
                       </div>
                     )}
-                    {/* Status Badge */}
-                    <div className={`absolute top-2 right-2 px-2.5 py-1 rounded-full text-xs font-semibold ${style}`}>
-                      {video.status === 'generating' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping mr-1" />}
-                      {label}
+
+                    {/* Bottom gradient */}
+                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 60%)', pointerEvents: 'none' }} />
+
+                    {/* Status badge */}
+                    <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 50, background: sc.bg, border: `1px solid ${sc.border}`, backdropFilter: 'blur(8px)' }}>
+                      {video.status === 'generating' && (
+                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#60a5fa', animation: 'hp-ping 1.2s ease-in-out infinite' }} />
+                      )}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, letterSpacing: '0.3px' }}>{sc.label}</span>
                     </div>
-                    {/* Play overlay */}
+
+                    {/* Play hover overlay */}
                     {video.status === 'completed' && (
-                      <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <div className="bg-white rounded-full p-3 shadow-lg">
-                          <Play className="h-5 w-5 text-primary fill-primary" />
+                      <div
+                        className="hp-play-overlay"
+                        style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', opacity: 0, transition: 'opacity 0.25s', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
+                          <Play size={18} color="#1a0e00" fill="#1a0e00" />
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Card Info */}
-                  <div className="p-4">
-                    <div className="flex items-start gap-2 mb-2">
-                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-bold text-primary">
-                          {video.avatar_name?.charAt(0) || 'A'}
+                  {/* Card body */}
+                  <div style={{ padding: '14px 16px 16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                      {/* Avatar initial */}
+                      <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(224,160,57,0.1)', border: '1px solid rgba(224,160,57,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: '#e0a039' }}>
+                          {video.avatar_name?.charAt(0)?.toUpperCase() || 'A'}
                         </span>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-slate-900 text-sm truncate">{video.title}</h3>
-                        <p className="text-xs text-slate-500">{video.avatar_name}</p>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: '#fff', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.1px' }}>
+                          {video.title}
+                        </p>
+                        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', margin: '2px 0 0' }}>
+                          {video.avatar_name}
+                        </p>
                       </div>
                     </div>
 
-                    <p className="text-xs text-slate-400 line-clamp-2 mb-3">
-                      {video.script?.substring(0, 80)}...
+                    {/* Script preview */}
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', margin: '0 0 12px', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {video.script?.substring(0, 90)}...
                     </p>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">
+                    {/* Bottom row */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>
                         {video.created_at ? format(new Date(video.created_at), 'dd MMM yyyy') : 'N/A'}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         {video.status === 'completed' && (
                           <>
                             <button
+                              className="hp-icon-btn"
                               onClick={e => { e.stopPropagation(); setSelectedVideo(video); }}
-                              className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
                               title="Play"
+                              style={{ color: '#e0a039' }}
                             >
-                              <Play className="h-3.5 w-3.5" />
+                              <Play size={13} />
                             </button>
                             <button
+                              className="hp-icon-btn"
                               onClick={e => { e.stopPropagation(); window.open(video.video_url, '_blank'); }}
-                              className="p-1.5 rounded-lg hover:bg-green-50 text-green-600 transition-colors"
                               title="Download"
+                              style={{ color: '#4ade80' }}
                             >
-                              <Download className="h-3.5 w-3.5" />
+                              <Download size={13} />
                             </button>
                           </>
                         )}
                         {video.status === 'generating' && (
-                          <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin" />
+                          <Loader2 size={13} color="#60a5fa" style={{ animation: 'hp-spin 1s linear infinite' }} />
                         )}
                       </div>
                     </div>
@@ -310,48 +424,76 @@ export default function HistoryPage() {
         )}
       </main>
 
-      {/* Video Detail Dialog */}
+      {/* ── Video Detail Dialog ── */}
       <Dialog open={!!selectedVideo} onOpenChange={() => setSelectedVideo(null)}>
-        <DialogContent className="max-w-4xl">
+        <DialogContent style={{ maxWidth: 840, background: '#0d0d1c', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 20, color: '#fff', padding: 28 }}>
           <DialogHeader>
-            <DialogTitle className="text-2xl font-bold">{selectedVideo?.title}</DialogTitle>
+            <DialogTitle style={{ fontSize: 22, fontWeight: 800, color: '#fff', letterSpacing: '-0.6px' }}>
+              {selectedVideo?.title}
+            </DialogTitle>
           </DialogHeader>
+
           {selectedVideo && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 4 }}>
+
+              {/* Status row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {getStatusIcon(selectedVideo.status)}
-                <span className="font-medium capitalize">{selectedVideo.status}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'capitalize' }}>
+                  {selectedVideo.status}
+                </span>
               </div>
 
+              {/* Video player */}
               {selectedVideo.video_url && selectedVideo.status === 'completed' ? (
                 <>
-                  <video controls className="w-full rounded-lg" src={selectedVideo.video_url} />
-                  <Button onClick={() => window.open(selectedVideo.video_url, '_blank')} className="w-full gap-2">
-                    <Download className="h-4 w-4" />
+                  <video
+                    controls
+                    style={{ width: '100%', borderRadius: 14, background: '#000', maxHeight: 360 }}
+                    src={selectedVideo.video_url}
+                  />
+                  <button
+                    onClick={() => window.open(selectedVideo.video_url, '_blank')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '13px', background: 'linear-gradient(135deg,#c07818,#f5d070,#c07818)', color: '#1a0e00', border: 'none', borderRadius: 50, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    <Download size={15} />
                     Download Video
-                  </Button>
+                  </button>
                 </>
               ) : (
-                <div className="aspect-video bg-slate-100 rounded-lg flex items-center justify-center">
-                  <p className="text-slate-500">
-                    {selectedVideo.status === 'generating' ? '⏳ Video is being generated...'
-                      : selectedVideo.status === 'failed' ? '❌ Video generation failed'
+                <div style={{ aspectRatio: '16/9', borderRadius: 14, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)', fontWeight: 300 }}>
+                    {selectedVideo.status === 'generating'
+                      ? '⏳ Video is being generated...'
+                      : selectedVideo.status === 'failed'
+                      ? '❌ Video generation failed'
                       : 'Video is queued for generation'}
                   </p>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200">
-                <div><p className="text-sm text-slate-500">Avatar</p><p className="font-medium">{selectedVideo.avatar_name}</p></div>
-                <div><p className="text-sm text-slate-500">Language</p><p className="font-medium">{selectedVideo.language}</p></div>
-                <div><p className="text-sm text-slate-500">Duration</p><p className="font-medium">{selectedVideo.duration} seconds</p></div>
-                <div><p className="text-sm text-slate-500">Created</p><p className="font-medium">{selectedVideo.created_at ? format(new Date(selectedVideo.created_at), 'PPP') : 'N/A'}</p></div>
+              {/* Meta grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '16px 0', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                {[
+                  { label: 'Avatar',   value: selectedVideo.avatar_name },
+                  { label: 'Language', value: selectedVideo.language },
+                  { label: 'Duration', value: `${selectedVideo.duration} seconds` },
+                  { label: 'Created',  value: selectedVideo.created_at ? format(new Date(selectedVideo.created_at), 'PPP') : 'N/A' },
+                ].map(m => (
+                  <div key={m.label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '1px', textTransform: 'uppercase', margin: '0 0 4px' }}>{m.label}</p>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: '#fff', margin: 0 }}>{m.value}</p>
+                  </div>
+                ))}
               </div>
 
+              {/* Script */}
               <div>
-                <p className="text-sm text-slate-500 mb-2">Script</p>
-                <div className="bg-slate-50 p-4 rounded-lg max-h-48 overflow-y-auto">
-                  <p className="text-sm whitespace-pre-wrap">{selectedVideo.script}</p>
+                <p style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '1px', textTransform: 'uppercase', margin: '0 0 8px' }}>Script</p>
+                <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '14px 16px', maxHeight: 160, overflowY: 'auto' }}>
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', whiteSpace: 'pre-wrap', margin: 0, lineHeight: 1.6, fontFamily: 'monospace' }}>
+                    {selectedVideo.script}
+                  </p>
                 </div>
               </div>
             </div>
@@ -359,22 +501,36 @@ export default function HistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Folder Dialog */}
+      {/* ── Create Folder Dialog ── */}
       <Dialog open={showCreateFolder} onOpenChange={setShowCreateFolder}>
-        <DialogContent>
+        <DialogContent style={{ maxWidth: 400, background: '#0d0d1c', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 20, color: '#fff', padding: 28 }}>
           <DialogHeader>
-            <DialogTitle>Create New Folder</DialogTitle>
+            <DialogTitle style={{ fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.4px' }}>
+              Create New Folder
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <Input
-              placeholder="Folder name"
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            <input
+              className="hp-dialog-input"
+              placeholder="Folder name..."
               value={newFolderName}
               onChange={e => setNewFolderName(e.target.value)}
               onKeyPress={e => e.key === 'Enter' && handleCreateFolder()}
+              style={{ padding: '11px 14px', fontSize: 14, width: '100%', boxSizing: 'border-box', fontFamily: 'inherit' }}
             />
-            <div className="flex gap-2">
-              <Button onClick={handleCreateFolder} className="flex-1">Create</Button>
-              <Button variant="outline" onClick={() => setShowCreateFolder(false)}>Cancel</Button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={handleCreateFolder}
+                style={{ flex: 1, padding: '12px', background: 'linear-gradient(135deg,#c07818,#f5d070,#c07818)', color: '#1a0e00', border: 'none', borderRadius: 50, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Create Folder
+              </button>
+              <button
+                onClick={() => setShowCreateFolder(false)}
+                style={{ flex: 1, padding: '12px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 50, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </DialogContent>

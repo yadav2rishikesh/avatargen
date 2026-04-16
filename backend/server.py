@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -571,7 +571,7 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
 
-        voice_id = data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8"
+        voice_id = data.heygen_voice_id or None
         async with httpx.AsyncClient() as hclient:
             heygen_response = await hclient.post(
                 "https://api.heygen.com/v3/videos",
@@ -867,7 +867,7 @@ async def _elevenlabs_to_heygen_asset(el_api_key: str, el_voice_id: str, script:
         el_resp.raise_for_status()
 
         hg_resp = await hclient.post(
-            "https://upload.heygen.com/v1/asset",
+            "https://api.heygen.com/v1/asset",
             headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "audio/mpeg"},
             content=el_resp.content
         )
@@ -1000,11 +1000,11 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                 asset_id = await _elevenlabs_to_heygen_asset(el_api_key=ELEVENLABS_API_KEY, el_voice_id=matched_el_voice_id, script=data.script, model_id=data.el_heygen_model, stability=data.el_heygen_stability, similarity_boost=0.75)
                 voice_block = {"type": "audio", "audio_asset_id": asset_id}
             else:
-                voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8", "speed": 1.0}
+                voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id or None, "speed": 1.0}
         elif data.heygen_voice_id:
             voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id, "speed": 1.0}
         else:
-            voice_block = {"type": "text", "input_text": data.script, "voice_id": "1bd001e7e50f421d891986aad5158bc8", "speed": 1.0}
+            voice_block = {"type": "text", "input_text": data.script, "voice_id": None, "speed": 1.0}
 
         async with httpx.AsyncClient(timeout=60.0) as hclient:
             # ============================================================
@@ -1027,7 +1027,7 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                 if isinstance(voice_block, dict) and voice_block.get("type") == "audio":
                     v3_payload["audio_id"] = voice_block.get("audio_asset_id")
                 else:
-                    v3_payload["voice_id"] = data.heygen_voice_id or "1bd001e7e50f421d891986aad5158bc8"
+                    v3_payload["voice_id"] = data.heygen_voice_id or None
 
                 hg = await hclient.post(
                     "https://api.heygen.com/v3/videos",
@@ -1111,6 +1111,70 @@ async def _poll_heygen_videos():
         except Exception as e:
             logging.error(f"Auto-poll loop error: {e}")
         await _asyncio.sleep(30)
+
+
+# ============= HEYGEN WEBHOOK =============
+
+@api_router.post("/webhook/heygen")
+async def heygen_webhook(request: Request):
+    """Receives HeyGen push notifications when video completes."""
+    try:
+        payload = await request.json()
+        logging.info(f"HeyGen webhook received: {payload}")
+
+        event_type = payload.get("event_type") or payload.get("type")
+        data = payload.get("data") or payload.get("event_data", {})
+
+        video_id = (
+            data.get("video_id") or
+            data.get("id") or
+            payload.get("video_id")
+        )
+        status = data.get("status") or payload.get("status")
+        video_url = data.get("video_url") or payload.get("video_url")
+        thumbnail_url = data.get("thumbnail_url") or payload.get("thumbnail_url")
+
+        if not video_id:
+            return {"received": True}
+
+        if event_type in ("avatar_video.success", "video.completed") or status == "completed":
+            await db.videos.update_one(
+                {"heygen_video_id": video_id},
+                {"$set": {
+                    "status": "completed",
+                    "video_url": video_url,
+                    "thumbnail_url": thumbnail_url
+                }}
+            )
+            logging.info(f"Webhook: video {video_id} marked completed")
+
+        elif event_type in ("avatar_video.failed", "video.failed") or status == "failed":
+            failure_code = data.get("failure_code", "")
+            await db.videos.update_one(
+                {"heygen_video_id": video_id},
+                {"$set": {"status": "failed", "failure_code": failure_code}}
+            )
+            logging.info(f"Webhook: video {video_id} marked failed: {failure_code}")
+
+        return {"received": True}
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
+        return {"received": True}
+
+@api_router.post("/webhook/register")
+async def register_webhook(current_user: dict = Depends(require_admin)):
+    """Admin registers webhook with HeyGen."""
+    try:
+        webhook_url = f"{FRONTEND_URL}/api/webhook/heygen"
+        async with httpx.AsyncClient(timeout=20.0) as hc:
+            resp = await hc.post(
+                "https://api.heygen.com/v1/webhook/endpoint.add",
+                headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                json={"url": webhook_url, "events": ["avatar_video.success", "avatar_video.fail"]}
+            )
+            return {"status": resp.status_code, "response": resp.json(), "webhook_url": webhook_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============= APP SETUP =============
 
