@@ -117,6 +117,7 @@ class Video(BaseModel):
     status: str = "queued"
     folder_id: Optional[str] = None
     heygen_video_id: Optional[str] = None
+    avatar_engine: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class VideoCreate(BaseModel):
@@ -140,6 +141,7 @@ class VideoResponse(BaseModel):
     thumbnail_url: Optional[str]
     status: str
     folder_id: Optional[str]
+    avatar_engine: Optional[str] = None
     created_at: datetime
 
 class ScriptGenerateRequest(BaseModel):
@@ -973,7 +975,7 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
             if not data.elevenlabs_voice_id:
                 raise HTTPException(status_code=400, detail="ElevenLabs voice ID required")
 
-        video = Video(user_id=current_user["id"], avatar_id=data.avatar_id, avatar_name=data.avatar_name, title=data.title, script=data.script, language=data.language, duration=data.duration, folder_id=data.folder_id, status="generating")
+        video = Video(user_id=current_user["id"], avatar_id=data.avatar_id, avatar_name=data.avatar_name, title=data.title, script=data.script, language=data.language, duration=data.duration, folder_id=data.folder_id, status="generating", avatar_engine=data.avatar_engine)
         doc = video.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
