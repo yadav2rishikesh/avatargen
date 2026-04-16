@@ -111,7 +111,7 @@ export default function CreatePage() {
   const [loadingELVoices,    setLoadingELVoices]    = useState(false);
 
   /* ── Advanced states ── */
-  const [avatarEngine,        setAvatarEngine]        = useState('standard');
+  const [avatarEngine,        setAvatarEngine]        = useState('avatar_iv');
   const [showAdvanced,        setShowAdvanced]        = useState(false);
   const [resolution,          setResolution]          = useState('1080p');
   const [enableCaptions,      setEnableCaptions]      = useState(false);
