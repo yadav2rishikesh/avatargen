@@ -243,6 +243,7 @@ export default function CreatePage() {
     try {
       await axios.post(`${API_URL}/videos/generate`, {
         avatar_id:   avatar.avatar_id,
+        avatar_type: avatar.avatar_type || 'studio_avatar',
         avatar_name: avatar.display_name || avatar.avatar_name,
         title,
         script,
