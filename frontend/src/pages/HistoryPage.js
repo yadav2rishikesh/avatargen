@@ -5,7 +5,7 @@ import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Folder, FolderPlus, Play, Download, Loader2, Clock, CheckCircle, XCircle, Search, RefreshCw } from 'lucide-react';
+import { Folder, FolderPlus, Play, Download, Loader2, Clock, CheckCircle, XCircle, Search, RefreshCw, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -87,13 +87,19 @@ export default function HistoryPage() {
     if (!window.confirm('Delete this failed video?')) return;
     try {
       const token = localStorage.getItem('token');
-      await fetch(`/api/videos/${videoId}`, {
+      const res = await fetch(`/api/videos/${videoId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
-      fetchData();
+      if (res.ok) {
+        // Instantly remove from local state — no manual refresh needed
+        setVideos(prev => prev.filter(v => v.id !== videoId));
+      } else {
+        fetchData();
+      }
     } catch (err) {
       console.error('Delete failed:', err);
+      fetchData();
     }
   };
 
