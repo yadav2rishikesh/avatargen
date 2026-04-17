@@ -11,19 +11,46 @@ import { format } from 'date-fns';
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 
-function ProgressBar({ videoId, createdAt }) {
+function ProgressBar({ videoId, createdAt, onCompleted }) {
   const [pct, setPct] = React.useState(5);
   React.useEffect(() => {
     const start = createdAt ? new Date(createdAt).getTime() : Date.now();
-    const tick = () => {
+    
+    // Time-based progress — synced to HeyGen average render time
+    const timeTick = () => {
       const elapsed = (Date.now() - start) / 1000;
-      // Simulate: reaches ~87% in 180s
-      const p = Math.min(87, Math.round(5 + (elapsed / 180) * 82));
+      const p = Math.min(89, Math.round(5 + (elapsed / 200) * 84));
       setPct(p);
     };
-    tick();
-    const interval = setInterval(tick, 3000);
-    return () => clearInterval(interval);
+    timeTick();
+    const timeInterval = setInterval(timeTick, 5000);
+
+    // Real status polling every 10 seconds
+    const token = localStorage.getItem('token');
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(`/api/videos/status/${videoId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (data.status === 'completed') {
+          setPct(100);
+          clearInterval(timeInterval);
+          clearInterval(statusInterval);
+          setTimeout(() => onCompleted && onCompleted(), 1000);
+        } else if (data.status === 'failed') {
+          clearInterval(timeInterval);
+          clearInterval(statusInterval);
+        }
+      } catch {}
+    };
+    pollStatus();
+    const statusInterval = setInterval(pollStatus, 10000);
+
+    return () => {
+      clearInterval(timeInterval);
+      clearInterval(statusInterval);
+    };
   }, [videoId, createdAt]);
   return (
     <div style={{ marginBottom:10 }}>
@@ -410,7 +437,7 @@ export default function HistoryPage() {
 
                     {/* Progress bar */}
                     {video.status === 'generating' && (
-                      <ProgressBar videoId={video.id} createdAt={video.created_at} />
+                      <ProgressBar videoId={video.id} createdAt={video.created_at} onCompleted={fetchData} />
                     )}
                     {/* Script preview */}
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', margin: '0 0 12px', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>

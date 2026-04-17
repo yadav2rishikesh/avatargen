@@ -860,6 +860,112 @@ def clean_script_for_tts(text: str) -> str:
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
 
+def detect_script_emotion(script: str) -> str:
+    """Analyze script content and return best HeyGen emotion."""
+    s = script.lower()
+    
+    # Excitement indicators
+    excited_keywords = ['!', 'wow', 'amazing', 'incredible', 'बेहतरीन', 'शानदार', 
+                       'जबरदस्त', 'गजब', 'faadu', 'dhakad', 'superb', 'launch',
+                       'new', 'introducing', 'announcing', 'swiggy बंद', 'savings शुरू']
+    
+    # Serious/professional indicators  
+    serious_keywords = ['important', 'warning', 'alert', 'critical', 'ध्यान', 
+                       'जरूरी', 'महत्वपूर्ण', 'serious', 'risk', 'loss', 'नुकसान']
+    
+    # Friendly/conversational indicators
+    friendly_keywords = ['?', 'क्या आप', 'do you', 'have you', 'hello', 'hi', 
+                        'नमस्ते', 'यार', 'bhai', 'friend', 'simple', 'easy', 'आसान']
+    
+    # Soothing indicators
+    soothing_keywords = ['relax', 'calm', 'peace', 'शांति', 'आराम', 'safe', 
+                        'secure', 'trust', 'भरोसा', 'safe', 'protect', 'सुरक्षा']
+    
+    excited_score = sum(2 if k in s else 0 for k in excited_keywords)
+    serious_score = sum(2 if k in s else 0 for k in serious_keywords)
+    friendly_score = sum(2 if k in s else 0 for k in friendly_keywords)
+    soothing_score = sum(2 if k in s else 0 for k in soothing_keywords)
+    
+    # Add weight for exclamation marks
+    excited_score += s.count('!') * 1.5
+    friendly_score += s.count('?') * 1.5
+    
+    scores = {
+        'Excited': excited_score,
+        'Serious': serious_score,
+        'Friendly': friendly_score,
+        'Soothing': soothing_score,
+        'Broadcaster': 0  # default fallback
+    }
+    
+    best = max(scores, key=scores.get)
+    # If no strong signal, use Broadcaster (most natural for ads)
+    return best if scores[best] > 2 else 'Broadcaster'
+
+
+def generate_motion_prompt(script: str, language: str = 'Hindi') -> str:
+    """Generate contextual motion prompt based on script analysis."""
+    s = script.lower()
+    
+    # Finance/business content
+    if any(k in s for k in ['finance', 'loan', 'invest', 'money', 'पैसा', 'निवेश', 'लोन', 'बीमा']):
+        return "confident business presenter, leaning slightly forward, precise hand gestures emphasizing key financial points, professional eye contact, natural head nods for emphasis"
+    
+    # Funny/Hinglish/casual content
+    if any(k in s for k in ['yaar', 'bhai', 'funny', 'haha', 'lol', 'swiggy', 'zomato', 'यार', 'भाई']):
+        return "casual conversational delivery, relaxed posture, expressive facial reactions, playful hand gestures, natural laughing expressions, talking to a friend"
+    
+    # Emotional/story content
+    if any(k in s for k in ['story', 'journey', 'life', 'family', 'dream', 'ज़िंदगी', 'परिवार', 'सपना']):
+        return "warm sincere delivery, gentle hand movements, heartfelt expressions, natural pauses for emotion, genuine eye contact, storytelling posture"
+    
+    # Product launch/announcement
+    if any(k in s for k in ['launch', 'new', 'introducing', 'announcing', 'नया', 'लॉन्च']):
+        return "energetic presenter, dynamic hand gestures, excited expressions, forward-leaning enthusiasm, strong confident eye contact"
+    
+    # Default — natural conversational
+    return "natural conversational delivery, moderate hand gestures, engaged expressions, good eye contact, slight head movements for emphasis"
+
+
+def detect_script_language(script: str) -> str:
+    """Detect if script is Hindi, Hinglish or English for locale setting."""
+    hindi_chars = len([c for c in script if 'ऀ' <= c <= 'ॿ'])
+    total_chars = len(script.replace(' ', ''))
+    
+    if total_chars == 0:
+        return 'en-US'
+    
+    hindi_ratio = hindi_chars / total_chars
+    
+    if hindi_ratio > 0.5:
+        return 'hi'  # Pure Hindi
+    elif hindi_ratio > 0.1:
+        return 'hi'  # Hinglish — use Hindi locale
+    else:
+        return 'en-US'  # English
+
+
+def get_expressiveness(script: str) -> str:
+    """Determine avatar expressiveness level from script energy."""
+    s = script.lower()
+    
+    high_energy = ['!', 'amazing', 'wow', 'शानदार', 'जबरदस्त', 'excited', 
+                   'launch', 'new', 'dhakad', 'faadu', 'incredible']
+    low_energy = ['serious', 'important', 'warning', 'careful', 'शांत', 
+                  'calm', 'gentle', 'trust', 'भरोसा']
+    
+    high_score = sum(1 for k in high_energy if k in s) + s.count('!') * 2
+    low_score = sum(1 for k in low_energy if k in s)
+    
+    if high_score > 3:
+        return 'high'
+    elif low_score > 2:
+        return 'low'
+    else:
+        return 'medium'
+
+
+
 # ============= ELEVENLABS → HEYGEN ASSET =============
 
 async def _elevenlabs_to_heygen_asset(el_api_key: str, el_voice_id: str, script: str, model_id: str = "eleven_multilingual_v2", stability: float = 0.5, similarity_boost: float = 0.75) -> str:
@@ -1050,6 +1156,25 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                         logging.error(f"Voice mapping error: {e}")
                         voice_obj["voice_id"] = data.elevenlabs_voice_id
 
+                detected_emotion = detect_script_emotion(data.script)
+                detected_locale = detect_script_language(data.script)
+                motion_prompt = generate_motion_prompt(data.script, data.language)
+                expressiveness = get_expressiveness(data.script)
+                voice_obj["emotion"] = detected_emotion
+                voice_obj["locale"] = detected_locale
+                if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
+                    el_model = data.elevenlabs_model_id or "eleven_multilingual_v2"
+                    el_stability = min([0, 0.5, 1.0], key=lambda x: abs(x - data.el_stability)) if el_model == "eleven_v3" else data.el_stability
+                    el_style = 0.4 if expressiveness == "high" else 0.2 if expressiveness == "low" else 0.3
+                    voice_obj["elevenlabs_settings"] = {
+                        "model": el_model,
+                        "stability": el_stability,
+                        "similarity_boost": data.el_similarity_boost,
+                        "style": el_style,
+                        "use_speaker_boost": True
+                    }
+                    logging.info(f"EL — model:{el_model} stability:{el_stability} style:{el_style}")
+                logging.info(f"Intel — emotion:{detected_emotion} locale:{detected_locale} expressiveness:{expressiveness}")
                 hg = await hclient.post(
                     "https://api.heygen.com/v2/video/generate",
                     headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
@@ -1059,7 +1184,10 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                                 "type": "avatar",
                                 "avatar_id": data.avatar_id,
                                 "avatar_style": "normal",
-                                "use_avatar_iv_model": True
+                                "use_avatar_iv_model": True,
+                                "talking_style": "expressive",
+                                "prompt": motion_prompt,
+                                "keep_original_prompt": False
                             },
                             "voice": voice_obj,
                             "background": {"type": "color", "value": "#ffffff"}
