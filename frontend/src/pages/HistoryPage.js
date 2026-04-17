@@ -82,6 +82,21 @@ export default function HistoryPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const deleteVideo = async (videoId, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this failed video?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`/api/videos/${videoId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      fetchData();
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
+  };
+
   const fetchData = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -472,6 +487,16 @@ export default function HistoryPage() {
                         )}
                         {video.status === 'generating' && (
                           <Loader2 size={13} color="#60a5fa" style={{ animation: 'hp-spin 1s linear infinite' }} />
+                        )}
+                        {video.status === 'failed' && (
+                          <button
+                            className="hp-icon-btn"
+                            onClick={e => deleteVideo(video.id, e)}
+                            title="Delete"
+                            style={{ color: '#fca5a5' }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         )}
                       </div>
                     </div>

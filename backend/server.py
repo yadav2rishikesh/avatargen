@@ -1075,6 +1075,32 @@ async def elevenlabs_preview(data: ElevenLabsPreviewRequest, current_user: dict 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.delete("/videos/{video_id}")
+async def delete_video(video_id: str, current_user: dict = Depends(get_current_user)):
+    try:
+        video = await db.videos.find_one({"id": video_id, "user_id": current_user["id"]})
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        if video.get("status") != "failed":
+            raise HTTPException(status_code=400, detail="Only failed videos can be deleted")
+        # Delete from HeyGen if has heygen_video_id
+        if video.get("heygen_video_id"):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as hclient:
+                    await hclient.delete(
+                        f"https://api.heygen.com/v1/video/{video['heygen_video_id']}",
+                        headers={"X-Api-Key": HEYGEN_API_KEY}
+                    )
+            except:
+                pass
+        # Delete from MongoDB
+        await db.videos.delete_one({"id": video_id})
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.post("/videos/generate-advanced", response_model=VideoResponse)
 async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict = Depends(get_current_user)):
     video = None
