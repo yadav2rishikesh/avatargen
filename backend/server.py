@@ -491,28 +491,32 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
 @api_router.post("/scripts/generate", response_model=ScriptResponse)
 async def generate_script(data: ScriptGenerateRequest, current_user: dict = Depends(get_current_user)):
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"script-gen-{current_user['id']}-{uuid.uuid4()}",
-            system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें — कुछ और नहीं।"
-        ).with_model("openai", "gpt-5.2")
-        response = await chat.send_message(UserMessage(text=f"Generate a script for: {data.prompt}"))
-        return ScriptResponse(script=response)
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role":"system","content":"आप एक AI अवतार वीडियो स्क्रिप्ट राइटर हैं। स्क्रिप्ट सीधे बोलने के लिए होनी चाहिए — जैसे एक इंसान कैमरे के सामने बोल रहा हो। कोई stage directions, brackets, character names, music cues नहीं। कोई (संगीत), (प्रवेश), (कैमरा) जैसे निर्देश नहीं। केवल शुद्ध देवनागरी हिंदी। वाक्यों के बीच ... का उपयोग करें। छोटे, भावनात्मक, conversational वाक्य। सीधे script शुरू करें।"},
+                {"role":"user","content":f"Generate a natural speaking script for an AI avatar video about: {data.prompt}"}
+            ]
+        )
+        return ScriptResponse(script=resp.choices[0].message.content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate script: {str(e)}")
 
 @api_router.post("/scripts/enhance", response_model=ScriptResponse)
 async def enhance_script(data: ScriptEnhanceRequest, current_user: dict = Depends(get_current_user)):
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"script-enhance-{current_user['id']}-{uuid.uuid4()}",
-            system_message="You are a professional script editor. Enhance the provided script by improving vocabulary, clarity, and flow while maintaining the original message and tone."
-        ).with_model("openai", "gpt-5.2")
-        response = await chat.send_message(UserMessage(text=f"Enhance this script:\n\n{data.script}"))
-        return ScriptResponse(script=response)
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role":"system","content":"You are a professional script editor. Enhance the provided script by improving vocabulary, clarity, and flow while maintaining the original message and tone."},
+                {"role":"user","content":f"Enhance this script:\n\n{data.script}"}
+            ]
+        )
+        return ScriptResponse(script=resp.choices[0].message.content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to enhance script: {str(e)}")
 
@@ -527,14 +531,16 @@ async def rewrite_script(data: ScriptRewriteRequest, current_user: dict = Depend
             "Professional": "Rewrite in a formal, professional, and authoritative tone."
         }
         instruction = tone_instructions.get(data.tone, "Rewrite in a professional tone.")
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"script-rewrite-{current_user['id']}-{uuid.uuid4()}",
-            system_message="आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। कभी भी hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। छोटे और भावनात्मक वाक्य लिखें। केवल plain script return करें।"
-        ).with_model("openai", "gpt-5.2")
-        response = await chat.send_message(UserMessage(text=f"Rewrite this script in {instruction} tone:\n\n{data.script}"))
-        return ScriptResponse(script=response)
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role":"system","content":"आप एक हिंदी स्क्रिप्ट राइटर हैं। केवल शुद्ध देवनागरी हिंदी में लिखें। hashtag, asterisk, bracket या English words उपयोग न करें। वाक्यों के बीच ... का उपयोग करें। केवल plain script return करें।"},
+                {"role":"user","content":f"Rewrite this script in {instruction} tone:\n\n{data.script}"}
+            ]
+        )
+        return ScriptResponse(script=resp.choices[0].message.content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to rewrite script: {str(e)}")
 
@@ -869,7 +875,7 @@ async def _elevenlabs_to_heygen_asset(el_api_key: str, el_voice_id: str, script:
         el_resp.raise_for_status()
 
         hg_resp = await hclient.post(
-            "https://api.heygen.com/v1/asset",
+            "https://api.heygen.com/v2/asset",
             headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "audio/mpeg"},
             content=el_resp.content
         )
@@ -980,44 +986,10 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
         doc['created_at'] = doc['created_at'].isoformat()
         await db.videos.insert_one(doc)
 
-        if data.voice_mode == "elevenlabs":
-            asset_id = await _elevenlabs_to_heygen_asset(el_api_key=data.elevenlabs_api_key, el_voice_id=data.elevenlabs_voice_id, script=data.script, model_id=data.elevenlabs_model_id, stability=data.el_stability, similarity_boost=data.el_similarity_boost)
-            voice_block = {"type": "audio", "audio_asset_id": asset_id}
-        elif data.voice_mode == "heygen" and data.use_el_in_heygen:
-            matched_el_voice_id = None
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as el_client:
-                    el_resp = await el_client.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": ELEVENLABS_API_KEY})
-                    el_resp.raise_for_status()
-                    search_name = (data.heygen_voice_name or "").lower().strip()
-                    for v in el_resp.json().get("voices", []):
-                        el_name = v.get("name", "").lower().strip()
-                        if el_name == search_name or search_name in el_name or el_name in search_name:
-                            matched_el_voice_id = v.get("voice_id")
-                            break
-            except Exception as e:
-                logging.error(f"EL voice match error: {e}")
-
-            if matched_el_voice_id:
-                asset_id = await _elevenlabs_to_heygen_asset(el_api_key=ELEVENLABS_API_KEY, el_voice_id=matched_el_voice_id, script=data.script, model_id=data.el_heygen_model, stability=data.el_heygen_stability, similarity_boost=0.75)
-                voice_block = {"type": "audio", "audio_asset_id": asset_id}
-            else:
-                voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id or None, "speed": 1.0}
-        elif data.heygen_voice_id:
-            voice_block = {"type": "text", "input_text": data.script, "voice_id": data.heygen_voice_id, "speed": 1.0}
-        else:
-            voice_block = {"type": "text", "input_text": data.script, "voice_id": None, "speed": 1.0}
-
         async with httpx.AsyncClient(timeout=60.0) as hclient:
-            # ============================================================
-            # ENGINE ROUTING LOGIC
-            # standard  → v2 API, no flags
-            # avatar_iv → v2 API + use_avatar_iv_model: True
-            # avatar_v  → v3 API (HeyGen auto-uses Avatar V if avatar supports it)
-            # ============================================================
 
-            if data.avatar_engine in ("avatar_v",):
-                # V3 API — Avatar V (server-side engine selection by HeyGen)
+            if data.avatar_engine == "avatar_v":
+                # V3 API — Avatar V with optional ElevenLabs
                 v3_payload = {
                     "type": "avatar",
                     "avatar_id": data.avatar_id,
@@ -1026,33 +998,70 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "resolution": "1080p",
                     "aspect_ratio": "16:9"
                 }
-                if isinstance(voice_block, dict) and voice_block.get("type") == "audio":
-                    v3_payload["audio_id"] = voice_block.get("audio_asset_id")
-                else:
-                    v3_payload["voice_id"] = data.heygen_voice_id or None
+                if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
+                    v3_payload["voice_id"] = data.elevenlabs_voice_id
+                    v3_payload["voice_settings"] = {
+                        "speed": 1.0,
+                        "pitch": 0,
+                        "engine_settings": {
+                            "engine_type": "elevenlabs",
+                            "model": data.elevenlabs_model_id or "eleven_multilingual_v2",
+                            "stability": data.el_stability,
+                            "similarity_boost": data.el_similarity_boost,
+                            "style": 0.5,
+                            "use_speaker_boost": True
+                        }
+                    }
+                elif data.heygen_voice_id:
+                    v3_payload["voice_id"] = data.heygen_voice_id
 
                 hg = await hclient.post(
                     "https://api.heygen.com/v3/videos",
                     headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                     json=v3_payload
                 )
+                logging.info(f"v3 response: {hg.status_code} {hg.text[:300]}")
                 hg.raise_for_status()
-                resp_data = hg.json().get("data", {})
-                heygen_video_id = resp_data.get("video_id") or resp_data.get("id")
+                heygen_video_id = hg.json().get("data", {}).get("video_id") or hg.json().get("data", {}).get("id")
 
             else:
-                # V2 API — Standard or Avatar IV
-                character_block = {"type": "avatar", "avatar_id": data.avatar_id, "avatar_style": "normal"}
-                if data.avatar_engine == "avatar_iv":
-                    character_block["use_avatar_iv_model"] = True
+                # V2 API — Avatar IV with optional ElevenLabs
+                voice_obj = {
+                    "type": "text",
+                    "input_text": data.script,
+                    "voice_id": data.heygen_voice_id or None,
+                    "speed": 1.0
+                }
+                if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
+                    # Map ElevenLabs voice ID to HeyGen imported voice ID
+                    try:
+                        vr = await hclient.get("https://api.heygen.com/v2/voices", headers={"X-Api-Key": HEYGEN_API_KEY})
+                        hg_voices = vr.json().get("data", {}).get("voices", [])
+                        er = await hclient.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": ELEVENLABS_API_KEY})
+                        el_voices = er.json().get("voices", [])
+                        el_name = next((v.get("name","") for v in el_voices if v.get("voice_id") == data.elevenlabs_voice_id), "")
+                        matched_id = next((v.get("voice_id") for v in hg_voices if el_name and el_name.lower() in v.get("name","").lower()), None)
+                        if matched_id:
+                            voice_obj["voice_id"] = matched_id
+                            logging.info(f"Mapped EL voice '{el_name}' -> HeyGen ID: {matched_id}")
+                        else:
+                            voice_obj["voice_id"] = data.elevenlabs_voice_id
+                    except Exception as e:
+                        logging.error(f"Voice mapping error: {e}")
+                        voice_obj["voice_id"] = data.elevenlabs_voice_id
 
                 hg = await hclient.post(
                     "https://api.heygen.com/v2/video/generate",
                     headers={"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                     json={
                         "video_inputs": [{
-                            "character": character_block,
-                            "voice": voice_block,
+                            "character": {
+                                "type": "avatar",
+                                "avatar_id": data.avatar_id,
+                                "avatar_style": "normal",
+                                "use_avatar_iv_model": True
+                            },
+                            "voice": voice_obj,
                             "background": {"type": "color", "value": "#ffffff"}
                         }],
                         "dimension": {"width": data.width, "height": data.height},
@@ -1060,6 +1069,7 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                         "test": False
                     }
                 )
+                logging.info(f"v2 response: {hg.status_code} {hg.text[:300]}")
                 hg.raise_for_status()
                 heygen_video_id = hg.json().get("data", {}).get("video_id")
 
@@ -1081,41 +1091,6 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
             await db.videos.update_one({"id": video.id}, {"$set": {"status": "failed"}})
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============= AUTO STATUS POLLING =============
-
-async def _poll_heygen_videos():
-    await _asyncio.sleep(15)
-    while True:
-        try:
-            videos = await db.videos.find(
-                {"status": "generating", "heygen_video_id": {"$exists": True, "$ne": None}},
-                {"_id": 0, "id": 1, "heygen_video_id": 1}
-            ).to_list(20)
-            for video in videos:
-                hg_id = video.get("heygen_video_id")
-                if not hg_id:
-                    continue
-                try:
-                    async with httpx.AsyncClient(timeout=20.0) as hc:
-                        resp = await hc.get(f"https://api.heygen.com/v3/videos/{hg_id}", headers={"x-api-key": HEYGEN_API_KEY})
-                        data = resp.json().get("data", {})
-                        status = data.get("status")
-                        video_url = data.get("video_url")
-                        thumbnail_url = data.get("thumbnail_url")
-                        if status == "completed" and video_url:
-                            await db.videos.update_one({"heygen_video_id": hg_id}, {"$set": {"status": "completed", "video_url": video_url, "thumbnail_url": thumbnail_url}})
-                            logging.info(f"Auto-poll: {hg_id} completed")
-                        elif status == "failed":
-                            await db.videos.update_one({"heygen_video_id": hg_id}, {"$set": {"status": "failed"}})
-                            logging.info(f"Auto-poll: {hg_id} failed")
-                except Exception as e:
-                    logging.error(f"Poll error for {hg_id}: {e}")
-        except Exception as e:
-            logging.error(f"Auto-poll loop error: {e}")
-        await _asyncio.sleep(30)
-
-
-# ============= HEYGEN WEBHOOK =============
 
 @api_router.post("/webhook/heygen")
 async def heygen_webhook(request: Request):
@@ -1200,3 +1175,31 @@ async def shutdown_db_client():
 @app.on_event("startup")
 async def start_polling():
     _asyncio.create_task(_poll_heygen_videos())
+async def _poll_heygen_videos():
+    await _asyncio.sleep(15)
+    while True:
+        try:
+            videos = await db.videos.find(
+                {"status": "generating", "heygen_video_id": {"$exists": True, "$ne": None}},
+                {"_id": 0, "id": 1, "heygen_video_id": 1}
+            ).to_list(20)
+            for video in videos:
+                hg_id = video.get("heygen_video_id")
+                if not hg_id:
+                    continue
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as hc:
+                        resp = await hc.get(f"https://api.heygen.com/v3/videos/{hg_id}", headers={"x-api-key": HEYGEN_API_KEY})
+                        data = resp.json().get("data", {})
+                        status = data.get("status")
+                        video_url = data.get("video_url")
+                        thumbnail_url = data.get("thumbnail_url")
+                        if status == "completed" and video_url:
+                            await db.videos.update_one({"heygen_video_id": hg_id}, {"$set": {"status": "completed", "video_url": video_url, "thumbnail_url": thumbnail_url}})
+                        elif status == "failed":
+                            await db.videos.update_one({"heygen_video_id": hg_id}, {"$set": {"status": "failed"}})
+                except Exception as e:
+                    logging.error(f"Poll error for {hg_id}: {e}")
+        except Exception as e:
+            logging.error(f"Auto-poll loop error: {e}")
+        await _asyncio.sleep(30)

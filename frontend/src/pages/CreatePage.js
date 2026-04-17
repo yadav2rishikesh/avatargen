@@ -1094,33 +1094,6 @@ export default function CreatePage() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {/* Standard */}
-                <button
-                  className="cp-engine"
-                  onClick={() => setAvatarEngine('standard')}
-                  style={{
-                    padding:       '13px 16px',
-                    borderRadius:  14,
-                    border:        `1px solid ${avatarEngine === 'standard' ? 'rgba(224,160,57,0.45)' : 'rgba(255,255,255,0.07)'}`,
-                    background:    avatarEngine === 'standard' ? 'rgba(224,160,57,0.07)' : 'rgba(255,255,255,0.02)',
-                    cursor:        'pointer',
-                    textAlign:     'left',
-                    transition:    'all 0.2s',
-                    width:         '100%',
-                    display:       'flex',
-                    alignItems:    'center',
-                    justifyContent:'space-between',
-                  }}
-                >
-                  <div>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: '#fff', margin: '0 0 2px' }}>Standard</p>
-                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', margin: 0 }}>HeyGen default engine</p>
-                  </div>
-                  {avatarEngine === 'standard' && (
-                    <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#e0a039', flexShrink: 0, boxShadow: '0 0 8px #e0a039' }} />
-                  )}
-                </button>
-
                 {/* Avatar IV */}
                 <button
                   className="cp-engine"
