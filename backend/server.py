@@ -1194,8 +1194,14 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "avatar_id": data.avatar_id,
                     "script": data.script,
                     "title": data.title,
-                    "resolution": "1080p",
                     "aspect_ratio": "16:9",
+                    "resolution": "1080p",
+                    "fit": "cover",
+                    "avatar_settings": {
+                        "use_avatar_iv_model": True,
+                        "model": "tokyo_v2_1_pde",
+                        "resolution": "1080p"
+                    },
                     "voice_settings": {
                         "speed": 1.0,
                         "locale": detected_locale
