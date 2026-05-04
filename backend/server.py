@@ -489,10 +489,10 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
                 pr = await hclient.get("https://api.heygen.com/v3/avatars/looks?ownership=private", headers={"X-Api-Key": HEYGEN_API_KEY})
                 if pr.status_code == 200:
                     for a in pr.json().get("data", []):
-                        if a.get("id") == "6c1b2f918a51422187d6ea5f8163bdda":
+                        if a.get("id") == "0be6c3cdfdc645b7b891735d97925d74":
                             pinned.append({
                                 "avatar_id": a.get("id"),
-                                "avatar_name": "Arjun (Photo Avatar)",
+                                "avatar_name": "EiPi Media (Digital Twin)",
                                 "preview_image_url": a.get("preview_image_url"),
                                 "avatar_type": "photo_avatar",
                                 "gender": a.get("gender", "Man"),
@@ -1183,6 +1183,36 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     json=v3_payload
                 )
                 logging.info(f"v3 response: {hg.status_code} {hg.text[:300]}")
+                hg.raise_for_status()
+                heygen_video_id = hg.json().get("data", {}).get("video_id") or hg.json().get("data", {}).get("id")
+
+            elif data.avatar_type == "digital_twin":
+                # V3 API — Digital Twin (gestures from original recording)
+                detected_locale = detect_script_language(data.script)
+                v3_dt_payload = {
+                    "type": "avatar",
+                    "avatar_id": data.avatar_id,
+                    "script": data.script,
+                    "title": data.title,
+                    "resolution": "1080p",
+                    "aspect_ratio": "16:9",
+                    "voice_settings": {
+                        "speed": 1.0,
+                        "locale": detected_locale
+                    }
+                }
+                if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
+                    v3_dt_payload["voice_id"] = data.elevenlabs_voice_id
+                elif data.heygen_voice_id:
+                    v3_dt_payload["voice_id"] = data.heygen_voice_id
+
+                logging.info(f"Digital Twin v3 — locale:{detected_locale}")
+                hg = await hclient.post(
+                    "https://api.heygen.com/v3/videos",
+                    headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
+                    json=v3_dt_payload
+                )
+                logging.info(f"v3 dt response: {hg.status_code} {hg.text[:300]}")
                 hg.raise_for_status()
                 heygen_video_id = hg.json().get("data", {}).get("video_id") or hg.json().get("data", {}).get("id")
 
