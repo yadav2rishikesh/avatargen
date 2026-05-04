@@ -685,7 +685,7 @@ export default function CreatePage() {
 
                 {/* Character progress bar */}
                 {(() => {
-                  const charLimits = { '10': 150, '20': 300, '30': 450, '60': 800, '90': 1200, '120': 1800, '180': 2800, '240': 4000, '300': 5000 };
+                  const charLimits = { '10': 150, '20': 270, '30': 400, '60': 800, '90': 1200, '120': 1800, '180': 2800, '240': 4000, '300': 5000 };
                   const limit  = charLimits[duration] || 400;
                   const count  = script.length;
                   const isOver = count > limit;

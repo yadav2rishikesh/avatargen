@@ -54,6 +54,119 @@ JIO_AVATARS = {
 
 # ============= MODELS =============
 
+
+# ============================================================
+# ElevenLabs Studio-Pipeline helpers (production, opt-in)
+# Added 2026-05-04. Does NOT affect existing flows.
+# ============================================================
+import base64 as _b64, uuid as _uuid, os as _os
+
+# Audio served by Nginx automatically from /var/www/html/audio/
+AUDIO_DIR = "/var/www/html/audio"
+AUDIO_PUBLIC_BASE = "http://13.233.112.86/audio"
+_os.makedirs(AUDIO_DIR, exist_ok=True)
+
+
+async def el_generate_with_timestamps(voice_id, text, model_id, api_key,
+                                       stability=0.5, similarity_boost=0.75, style=0.3):
+    """Calls ElevenLabs with-timestamps endpoint. Returns dict with audio + char timings."""
+    import httpx
+    # Detect language for correct pronunciation — critical for Hindi/Hinglish
+    # language_code_detected
+    detected = detect_script_language(text)
+    lang_map = {"hi": "hi", "en": "en", "mr": "hi", "te": "te", "ta": "ta"}
+    language_code = lang_map.get(detected, "hi")  # default hi for Indian content
+
+    payload = {
+        "text": text,
+        "model_id": model_id,
+        "language_code": language_code,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity_boost,
+            "style": style,
+            "use_speaker_boost": True
+        }
+    }
+    async with httpx.AsyncClient(timeout=60) as cli:
+        r = await cli.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps",
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+            json=payload
+        )
+        if r.status_code == 401:
+            raise HTTPException(status_code=400, detail="Invalid ElevenLabs API key")
+        r.raise_for_status()
+        data = r.json()
+    
+    audio_bytes = _b64.b64decode(data["audio_base64"])
+    align = data.get("alignment") or data.get("normalized_alignment") or {}
+    chars = align.get("characters", [])
+    starts = align.get("character_start_times_seconds", [])
+    ends = align.get("character_end_times_seconds", [])
+    duration = float(ends[-1]) if ends else 0.0
+    return {
+        "audio_bytes": audio_bytes,
+        "characters": chars,
+        "starts": starts,
+        "ends": ends,
+        "duration": duration,
+        "text": text
+    }
+
+
+def save_audio_to_disk(audio_bytes, ext="mp3"):
+    """Save audio to /var/www/html/audio/. Returns public URL."""
+    fname = f"{_uuid.uuid4().hex}.{ext}"
+    fpath = _os.path.join(AUDIO_DIR, fname)
+    with open(fpath, "wb") as f:
+        f.write(audio_bytes)
+    return {"filename": fname, "filepath": fpath, "public_url": f"{AUDIO_PUBLIC_BASE}/{fname}"}
+
+
+def chars_to_words(characters, starts, ends):
+    """Convert char-level timestamps to word-level (HeyGen format)."""
+    if not characters or not starts or not ends:
+        return []
+    
+    words = [{"word": "<start>", "start_time": 0.0, "end_time": 0.0}]
+    cur_chars = []
+    cur_start = None
+    
+    SPACE_CHARS = set(" \t\n")
+    PUNCT = set(",.!?;:।॥—\"'()[]{}")
+    
+    for i, ch in enumerate(characters):
+        if i >= len(starts) or i >= len(ends):
+            break
+        if ch in SPACE_CHARS:
+            if cur_chars and cur_start is not None:
+                end_t = float(ends[i-1]) if i > 0 else float(starts[i])
+                words.append({"word": "".join(cur_chars), "start_time": float(cur_start), "end_time": end_t})
+                cur_chars, cur_start = [], None
+        elif ch in PUNCT:
+            if cur_chars and cur_start is not None:
+                words.append({"word": "".join(cur_chars) + ch, "start_time": float(cur_start), "end_time": float(ends[i])})
+                cur_chars, cur_start = [], None
+            elif len(words) > 1:
+                words[-1]["word"] += ch
+                words[-1]["end_time"] = float(ends[i])
+        else:
+            if cur_start is None:
+                cur_start = starts[i]
+            cur_chars.append(ch)
+    
+    if cur_chars and cur_start is not None:
+        words.append({"word": "".join(cur_chars), "start_time": float(cur_start), "end_time": float(ends[-1])})
+    
+    final_t = float(ends[-1]) if ends else 0.0
+    words.append({"word": "<end>", "start_time": final_t, "end_time": final_t})
+    return words
+
+# ============================================================
+# End ElevenLabs Studio-Pipeline helpers
+# ============================================================
+
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -494,7 +607,7 @@ async def get_avatars(current_user: dict = Depends(get_current_user)):
                                 "avatar_id": a.get("id"),
                                 "avatar_name": "EiPi Media (Digital Twin)",
                                 "preview_image_url": a.get("preview_image_url"),
-                                "avatar_type": "photo_avatar",
+                                "avatar_type": "digital_twin",
                                 "gender": a.get("gender", "Man"),
                                 "supported_api_engines": a.get("supported_api_engines", ["avatar_iv"]),
                                 "is_private": True,
@@ -1133,6 +1246,11 @@ async def delete_video(video_id: str, current_user: dict = Depends(get_current_u
 
 @api_router.post("/videos/generate-advanced", response_model=VideoResponse)
 async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict = Depends(get_current_user)):
+    # Step E: digital twins always use IV path (handles EL audio_data correctly)
+    # Avatar V is a UI label; under the hood it uses IV+tokyo_v2_1_pde anyway (HAR confirmed)
+    if data.avatar_type == "digital_twin" and data.avatar_engine == "avatar_v":
+        logging.info(f"Step E redirect: Avatar V + digital_twin → forcing IV path")
+        data.avatar_engine = "avatar_iv"
     video = None
     try:
         await check_monthly_limit(current_user["id"])
@@ -1161,18 +1279,42 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "aspect_ratio": "16:9"
                 }
                 if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
-                    v3_payload["voice_id"] = data.elevenlabs_voice_id
-                    v3_payload["voice_settings"] = {
-                        "speed": 1.0,
-                        "pitch": 0,
-                        "engine_settings": {
-                            "engine_type": "elevenlabs",
-                            "model": data.elevenlabs_model_id or "eleven_multilingual_v2",
-                            "stability": data.el_stability,
-                            "similarity_boost": data.el_similarity_boost,
-                            "style": 0.5,
-                            "use_speaker_boost": True
-                        }
+                    # APPROACH2_AUDIO_URL
+                    # Generate audio via ElevenLabs, save to disk, pass audio_url to HeyGen.
+                    # Confirmed working: HTTP 200 at 16:31 (video_id 5393f577...)
+                    # Works with ANY EL voice — no HeyGen import required.
+                    el_key = os.getenv("ELEVENLABS_API_KEY", "")
+                    if not el_key:
+                        raise HTTPException(status_code=400, detail="ELEVENLABS_API_KEY not configured on server")
+
+                    el_model_v = data.elevenlabs_model_id or "eleven_multilingual_v2"
+                    logging.info(f"Avatar V EL: voice={data.elevenlabs_voice_id} model={el_model_v}")
+
+                    # Step 1: Generate audio via ElevenLabs with-timestamps
+                    el_result_v = await el_generate_with_timestamps(
+                        voice_id=data.elevenlabs_voice_id,
+                        text=data.script,
+                        model_id=el_model_v,
+                        api_key=el_key,
+                        stability=data.el_stability,
+                        similarity_boost=data.el_similarity_boost,
+                        style=0.5
+                    )
+
+                    # Step 2: Save to /var/www/html/audio/ (Nginx public URL)
+                    saved_v = save_audio_to_disk(el_result_v["audio_bytes"], ext="mp3")
+                    logging.info(f"Avatar V EL: audio saved {saved_v['public_url']} duration={el_result_v['duration']:.2f}s")
+
+                    # Step 3: Send audio_url at TOP LEVEL (HeyGen public API spec)
+                    v3_payload.pop("script", None)
+                    v3_payload.pop("voice_id", None)
+                    v3_payload.pop("voice_settings", None)
+                    v3_payload["audio_url"] = saved_v["public_url"]
+                    v3_payload["fit"] = "cover"
+                    v3_payload["avatar_settings"] = {
+                        "use_avatar_iv_model": True,
+                        "model": "tokyo_v2_1_pde",
+                        "resolution": "1080p"
                     }
                 elif data.heygen_voice_id:
                     v3_payload["voice_id"] = data.heygen_voice_id
@@ -1208,16 +1350,61 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     }
                 }
                 if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
-                    v3_dt_payload["voice_id"] = data.elevenlabs_voice_id
+                    # ============================================================
+                    # STUDIO PIPELINE: ElevenLabs with-timestamps + audio_data
+                    # Replicates HeyGen Studio's two-step TTS architecture.
+                    # Pre-generates audio with timestamps, sends to HeyGen for
+                    # perfect lip-sync regardless of EL voice.
+                    # ============================================================
+                    el_key = os.getenv("ELEVENLABS_API_KEY", "")
+                    if not el_key:
+                        raise HTTPException(status_code=400, detail="ELEVENLABS_API_KEY not configured on server")
+
+                    el_model = getattr(data, "el_model", None) or "eleven_multilingual_v2"
+                    logging.info(f"Studio Pipeline: EL voice={data.elevenlabs_voice_id} model={el_model}")
+
+                    # Step 1: Generate audio with character-level timestamps
+                    el_result = await el_generate_with_timestamps(
+                        voice_id=data.elevenlabs_voice_id,
+                        text=data.script,
+                        model_id=el_model,
+                        api_key=el_key
+                    )
+
+                    # Step 2: Save mp3 to /var/www/html/audio/ (Nginx-served)
+                    saved = save_audio_to_disk(el_result["audio_bytes"], ext="mp3")
+                    logging.info(f"Studio Pipeline: audio saved {saved['public_url']} duration={el_result['duration']:.2f}s")
+
+                    # Step 3: Convert char-level to word-level timestamps (HeyGen format)
+                    words = chars_to_words(el_result["characters"], el_result["starts"], el_result["ends"])
+
+                    # Step 4: Build Studio-style audio_data block
+                    v3_dt_payload["audio_data"] = {
+                        "audio_url": saved["public_url"],
+                        "duration": el_result["duration"],
+                        "words": words,
+                        "text": data.script,
+                        "voice_id": data.elevenlabs_voice_id
+                    }
+
+                    # Step 5: Remove voice_settings — HeyGen will sync to our audio
+                    v3_dt_payload.pop("voice_settings", None)
+
                 elif data.heygen_voice_id:
                     v3_dt_payload["voice_id"] = data.heygen_voice_id
 
+                # DEEP DIAGNOSTIC: log full payload before sending
+                import json as _json_dbg
+                _payload_str = _json_dbg.dumps(v3_dt_payload, ensure_ascii=False, indent=2)
+                logging.info(f"DEEP DIAGNOSTIC [DT] payload keys: {list(v3_dt_payload.keys())}")
+                logging.info(f"DEEP DIAGNOSTIC [DT] full payload (first 2000 chars):\n{_payload_str[:2000]}")
                 logging.info(f"Digital Twin v3 — locale:{detected_locale}")
                 hg = await hclient.post(
                     "https://api.heygen.com/v3/videos",
                     headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                     json=v3_dt_payload
                 )
+                logging.info(f"DEEP DIAGNOSTIC [DT] HeyGen response: {hg.status_code} {hg.text[:500]}")
                 logging.info(f"v3 dt response: {hg.status_code} {hg.text[:300]}")
                 hg.raise_for_status()
                 heygen_video_id = hg.json().get("data", {}).get("video_id") or hg.json().get("data", {}).get("id")
@@ -1472,3 +1659,60 @@ async def _poll_heygen_videos():
         except Exception as e:
             logging.error(f"Auto-poll loop error: {e}")
         await _asyncio.sleep(30)
+
+
+# ============================================================
+# Studio Pipeline Test Endpoint (isolated, opt-in via curl only)
+# Added 2026-05-04. Does NOT affect any existing flow.
+# Usage: POST /api/test/el-pipeline {"voice_id": "...", "text": "..."}
+# ============================================================
+@app.post("/api/test/el-pipeline")
+async def test_el_pipeline(request: Request):
+    """Tests EL with-timestamps + save to disk + words array. NO video generation."""
+    try:
+        body = await request.json()
+        voice_id = body.get("voice_id", "d0grukerEzs069eKIauC")
+        text = body.get("text", "Hello, this is a test of the studio pipeline.")
+        model_id = body.get("model_id", "eleven_multilingual_v2")
+        
+        el_key = os.getenv("ELEVENLABS_API_KEY", "")
+        if not el_key:
+            return {"ok": False, "error": "ELEVENLABS_API_KEY not set"}
+        
+        # Step 1: Generate audio with timestamps
+        result = await el_generate_with_timestamps(
+            voice_id=voice_id,
+            text=text,
+            model_id=model_id,
+            api_key=el_key
+        )
+        
+        # Step 2: Save to disk
+        saved = save_audio_to_disk(result["audio_bytes"], ext="mp3")
+        
+        # Step 3: Build words array
+        words = chars_to_words(result["characters"], result["starts"], result["ends"])
+        
+        return {
+            "ok": True,
+            "audio": {
+                "filename": saved["filename"],
+                "public_url": saved["public_url"],
+                "size_bytes": len(result["audio_bytes"]),
+                "duration": result["duration"]
+            },
+            "words_count": len(words),
+            "words_sample": words[:5] + ["..."] + words[-3:] if len(words) > 8 else words,
+            "char_count": len(result["characters"]),
+            "voice_id": voice_id,
+            "model_id": model_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "trace": traceback.format_exc()[-500:]}
+# ============================================================
+# End test endpoint
+# ============================================================
+
