@@ -68,19 +68,39 @@ _os.makedirs(AUDIO_DIR, exist_ok=True)
 
 
 async def el_generate_with_timestamps(voice_id, text, model_id, api_key,
-                                       stability=0.5, similarity_boost=0.75, style=0.3):
+                                       stability=0.5, similarity_boost=0.75, style=0.3,
+                                       speed=None):
     """Calls ElevenLabs with-timestamps endpoint. Returns dict with audio + char timings."""
     import httpx
     # Detect language for correct pronunciation — critical for Hindi/Hinglish
     # language_code_detected
     detected = detect_script_language(text)
-    lang_map = {"hi": "hi", "en": "en", "mr": "hi", "te": "te", "ta": "ta"}
+    lang_map = {"hi": "hi", "en": "en", "en-US": "en", "en-GB": "en", "mr": "hi", "te": "te", "ta": "ta"}
     language_code = lang_map.get(detected, "hi")  # default hi for Indian content
+
+    # Auto-select model: English/Hinglish → multilingual_v2 (Indian accent)
+    # Pure Hindi → eleven_v3 (better Devanagari)
+    english_ratio = sum(1 for c in text if ord(c) < 128) / max(len(text), 1)
+    if model_id in ("eleven_v3", "eleven_multilingual_v2", "elevenLabsV3"):
+        if language_code == "en" or english_ratio > 0.4:
+            model_id = "eleven_multilingual_v2"
+        else:
+            model_id = "eleven_v3"
+
+    # Auto speed
+    if speed is None:
+        speed = 1.15 if language_code == "en" else 1.05
+
+    # Auto stability + style
+    if stability == 0.5:
+        stability = 0.35 if language_code == "en" else 0.35
+    if style == 0.3:
+        style = 0.55 if language_code == "en" else 0.6
 
     payload = {
         "text": text,
         "model_id": model_id,
-        "language_code": language_code,
+        "speed": speed,
         "voice_settings": {
             "stability": stability,
             "similarity_boost": similarity_boost,
@@ -88,6 +108,10 @@ async def el_generate_with_timestamps(voice_id, text, model_id, api_key,
             "use_speaker_boost": True
         }
     }
+    # Only add language_code for Hindi — English voices use their native accent
+    # Forcing language_code=en overrides Indian English accent to American
+    if language_code != "en":
+        payload["language_code"] = language_code
     async with httpx.AsyncClient(timeout=60) as cli:
         r = await cli.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps",
@@ -123,6 +147,23 @@ def save_audio_to_disk(audio_bytes, ext="mp3"):
         f.write(audio_bytes)
     return {"filename": fname, "filepath": fpath, "public_url": f"{AUDIO_PUBLIC_BASE}/{fname}"}
 
+
+async def upload_audio_to_heygen(audio_bytes: bytes, api_key: str) -> str:
+    """Upload audio to HeyGen CDN. Returns asset_id for use in video requests.
+    Avoids jerk/stutter caused by HeyGen fetching from external URLs."""
+    import httpx
+    async with httpx.AsyncClient(timeout=60) as cli:
+        r = await cli.post(
+            "https://upload.heygen.com/v1/asset",
+            headers={"x-api-key": api_key, "Content-Type": "audio/mpeg"},
+            content=audio_bytes
+        )
+        if r.status_code != 200:
+            logging.error(f"HeyGen asset upload failed: {r.status_code} {r.text[:200]}")
+            return None
+        asset_id = r.json().get("data", {}).get("id")
+        logging.info(f"HeyGen asset uploaded: {asset_id}")
+        return asset_id
 
 def chars_to_words(characters, starts, ends):
     """Convert char-level timestamps to word-level (HeyGen format)."""
@@ -338,6 +379,7 @@ class VideoCreateAdvanced(BaseModel):
     el_stability: float = 0.5
     el_similarity_boost: float = 0.75
     avatar_engine: str = "avatar_iv"
+    aspect_ratio: str = "16:9"
     width: int = 1920
     height: int = 1080
     enable_captions: bool = False
@@ -420,6 +462,12 @@ async def check_monthly_limit(user_id: str):
     return count
 
 # ============= AUTH ROUTES =============
+
+@api_router.get("/health")
+
+async def health_check():
+
+    return {"status": "ok", "service": "jiogen"}
 
 @api_router.post("/auth/signup", response_model=TokenResponse)
 async def signup(data: UserSignup):
@@ -724,7 +772,8 @@ async def generate_video(data: VideoCreate, current_user: dict = Depends(get_cur
                     "voice_id": voice_id,
                     "title": data.title,
                     "resolution": "1080p",
-                    "aspect_ratio": "16:9"
+                    "aspect_ratio": data.aspect_ratio,
+                    "video_orientation": "portrait" if data.aspect_ratio == "9:16" else "landscape"
                 },
                 timeout=60.0
             )
@@ -1246,11 +1295,8 @@ async def delete_video(video_id: str, current_user: dict = Depends(get_current_u
 
 @api_router.post("/videos/generate-advanced", response_model=VideoResponse)
 async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict = Depends(get_current_user)):
-    # Step E: digital twins always use IV path (handles EL audio_data correctly)
-    # Avatar V is a UI label; under the hood it uses IV+tokyo_v2_1_pde anyway (HAR confirmed)
-    if data.avatar_type == "digital_twin" and data.avatar_engine == "avatar_v":
-        logging.info(f"Step E redirect: Avatar V + digital_twin → forcing IV path")
-        data.avatar_engine = "avatar_iv"
+    # EiPi Media supports avatar_v natively (confirmed from HeyGen API)
+    # Step E removed — Avatar V allowed to run for digital_twin avatars
     video = None
     try:
         await check_monthly_limit(current_user["id"])
@@ -1276,7 +1322,9 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "script": data.script,
                     "title": data.title,
                     "resolution": "1080p",
-                    "aspect_ratio": "16:9"
+                    "fit": "cover",
+                    "aspect_ratio": data.aspect_ratio,
+                    "video_orientation": "portrait" if data.aspect_ratio == "9:16" else "landscape"
                 }
                 if data.voice_mode == "elevenlabs" and data.elevenlabs_voice_id:
                     # APPROACH2_AUDIO_URL
@@ -1287,7 +1335,12 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     if not el_key:
                         raise HTTPException(status_code=400, detail="ELEVENLABS_API_KEY not configured on server")
 
-                    el_model_v = data.elevenlabs_model_id or "eleven_multilingual_v2"
+                    # Auto-select model based on script language
+                    english_ratio = sum(1 for c in data.script if ord(c) < 128) / max(len(data.script), 1)
+                    if english_ratio > 0.4:
+                        el_model_v = "eleven_multilingual_v2"  # English/Hinglish
+                    else:
+                        el_model_v = "eleven_v3"  # Pure Hindi
                     logging.info(f"Avatar V EL: voice={data.elevenlabs_voice_id} model={el_model_v}")
 
                     # Step 1: Generate audio via ElevenLabs with-timestamps
@@ -1298,23 +1351,30 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                         api_key=el_key,
                         stability=data.el_stability,
                         similarity_boost=data.el_similarity_boost,
-                        style=0.5
+                        style=0.55
                     )
 
-                    # Step 2: Save to /var/www/html/audio/ (Nginx public URL)
-                    saved_v = save_audio_to_disk(el_result_v["audio_bytes"], ext="mp3")
-                    logging.info(f"Avatar V EL: audio saved {saved_v['public_url']} duration={el_result_v['duration']:.2f}s")
+                    # Step 2: Upload to HeyGen CDN → audio_asset_id (no jerk)
+                    asset_id_v = await upload_audio_to_heygen(el_result_v["audio_bytes"], HEYGEN_API_KEY)
+                    if not asset_id_v:
+                        saved_v = save_audio_to_disk(el_result_v["audio_bytes"], ext="mp3")
+                        logging.warning("Asset upload failed, fallback to audio_url")
+                        audio_source_v = {"audio_url": saved_v["public_url"]}
+                    else:
+                        audio_source_v = {"audio_asset_id": asset_id_v}
+                    logging.info(f"Avatar V EL: source={list(audio_source_v.keys())[0]} duration={el_result_v['duration']:.2f}s")
 
-                    # Step 3: Send audio_url at TOP LEVEL (HeyGen public API spec)
+                    # Step 3: Build final payload
                     v3_payload.pop("script", None)
                     v3_payload.pop("voice_id", None)
                     v3_payload.pop("voice_settings", None)
-                    v3_payload["audio_url"] = saved_v["public_url"]
+                    v3_payload.update(audio_source_v)
                     v3_payload["fit"] = "cover"
                     v3_payload["avatar_settings"] = {
                         "use_avatar_iv_model": True,
                         "model": "tokyo_v2_1_pde",
-                        "resolution": "1080p"
+                        "resolution": "1080p",
+                        "cross_ref_avatar_id": data.avatar_id
                     }
                 elif data.heygen_voice_id:
                     v3_payload["voice_id"] = data.heygen_voice_id
@@ -1336,13 +1396,15 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "avatar_id": data.avatar_id,
                     "script": data.script,
                     "title": data.title,
-                    "aspect_ratio": "16:9",
+                    "aspect_ratio": data.aspect_ratio,
+                    "video_orientation": "portrait" if data.aspect_ratio == "9:16" else "landscape",
                     "resolution": "1080p",
                     "fit": "cover",
                     "avatar_settings": {
                         "use_avatar_iv_model": True,
                         "model": "tokyo_v2_1_pde",
-                        "resolution": "1080p"
+                        "resolution": "1080p",
+                        "cross_ref_avatar_id": data.avatar_id
                     },
                     "voice_settings": {
                         "speed": 1.0,
@@ -1368,43 +1430,36 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                         voice_id=data.elevenlabs_voice_id,
                         text=data.script,
                         model_id=el_model,
-                        api_key=el_key
+                        api_key=el_key,
+                        stability=data.el_stability,
+                        similarity_boost=data.el_similarity_boost,
+                        style=0.55
                     )
 
-                    # Step 2: Save mp3 to /var/www/html/audio/ (Nginx-served)
-                    saved = save_audio_to_disk(el_result["audio_bytes"], ext="mp3")
-                    logging.info(f"Studio Pipeline: audio saved {saved['public_url']} duration={el_result['duration']:.2f}s")
+                    # Step 2: Upload audio to HeyGen CDN (avoids jerk from external URL fetch)
+                    asset_id_dt = await upload_audio_to_heygen(el_result["audio_bytes"], HEYGEN_API_KEY)
+                    if not asset_id_dt:
+                        saved = save_audio_to_disk(el_result["audio_bytes"], ext="mp3")
+                        logging.warning(f"Asset upload failed, falling back to audio_url")
+                        v3_dt_payload["audio_url"] = saved["public_url"]
+                    else:
+                        v3_dt_payload["audio_asset_id"] = asset_id_dt
+                    logging.info(f"Digital Twin EL: asset_id={asset_id_dt} duration={el_result['duration']:.2f}s")
 
-                    # Step 3: Convert char-level to word-level timestamps (HeyGen format)
-                    words = chars_to_words(el_result["characters"], el_result["starts"], el_result["ends"])
-
-                    # Step 4: Build Studio-style audio_data block
-                    v3_dt_payload["audio_data"] = {
-                        "audio_url": saved["public_url"],
-                        "duration": el_result["duration"],
-                        "words": words,
-                        "text": data.script,
-                        "voice_id": data.elevenlabs_voice_id
-                    }
-
-                    # Step 5: Remove voice_settings — HeyGen will sync to our audio
+                    # Step 4: Remove conflicting fields
+                    v3_dt_payload.pop("script", None)
                     v3_dt_payload.pop("voice_settings", None)
+                    v3_dt_payload.pop("voice_id", None)
 
                 elif data.heygen_voice_id:
                     v3_dt_payload["voice_id"] = data.heygen_voice_id
 
-                # DEEP DIAGNOSTIC: log full payload before sending
-                import json as _json_dbg
-                _payload_str = _json_dbg.dumps(v3_dt_payload, ensure_ascii=False, indent=2)
-                logging.info(f"DEEP DIAGNOSTIC [DT] payload keys: {list(v3_dt_payload.keys())}")
-                logging.info(f"DEEP DIAGNOSTIC [DT] full payload (first 2000 chars):\n{_payload_str[:2000]}")
                 logging.info(f"Digital Twin v3 — locale:{detected_locale}")
                 hg = await hclient.post(
                     "https://api.heygen.com/v3/videos",
                     headers={"x-api-key": HEYGEN_API_KEY, "Content-Type": "application/json"},
                     json=v3_dt_payload
                 )
-                logging.info(f"DEEP DIAGNOSTIC [DT] HeyGen response: {hg.status_code} {hg.text[:500]}")
                 logging.info(f"v3 dt response: {hg.status_code} {hg.text[:300]}")
                 hg.raise_for_status()
                 heygen_video_id = hg.json().get("data", {}).get("video_id") or hg.json().get("data", {}).get("id")
@@ -1422,7 +1477,8 @@ async def generate_video_advanced(data: VideoCreateAdvanced, current_user: dict 
                     "script": data.script,
                     "title": data.title,
                     "resolution": "1080p",
-                    "aspect_ratio": "16:9",
+                    "aspect_ratio": data.aspect_ratio,
+                    "video_orientation": "portrait" if data.aspect_ratio == "9:16" else "landscape",
                     "motion_prompt": motion_prompt,
                     "expressiveness": expressiveness,
                     "voice_settings": {

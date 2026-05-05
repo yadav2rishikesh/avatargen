@@ -106,7 +106,7 @@ export default function CreatePage() {
   const [elLangFilter,       setElLangFilter]       = useState('all');
   const [elSearchTerm,       setElSearchTerm]       = useState('');
   const [selectedELVoice,    setSelectedELVoice]    = useState(null);
-  const [elModel,            setElModel]            = useState('eleven_v3');
+  const [elModel,            setElModel]            = useState('eleven_multilingual_v2');
   const [elStability,        setElStability]        = useState(0.5);
   const [elSimilarity,       setElSimilarity]       = useState(0.75);
   const [loadingELVoices,    setLoadingELVoices]    = useState(false);
@@ -311,7 +311,6 @@ export default function CreatePage() {
         duration:        parseInt(duration),
         folder_id:       null,
         avatar_engine:   avatarEngine,
-        aspect_ratio:    aspectRatio,
         width:           w,
         height:          h,
         enable_captions: enableCaptions,
@@ -354,38 +353,12 @@ export default function CreatePage() {
       elSearchTerm === '' ? true :
         v.name?.toLowerCase().includes(elSearchTerm.toLowerCase()) ||
         v.labels?.accent?.toLowerCase().includes(elSearchTerm.toLowerCase());
-
-    const accent = v.labels?.accent?.toLowerCase() || '';
-    const lang = v.labels?.language?.toLowerCase() || '';
-    const name = v.name?.toLowerCase() || '';
-
-    let matchLang = true;
-    if (elLangFilter === 'all') {
-      matchLang = true;
-    } else if (elLangFilter === 'english') {
-      // English = lang=en OR accent=indian (Indian English voices)
-      matchLang = lang.includes('en') || accent === 'indian' ||
-                  name.includes('english') || name.includes('indian');
-    } else if (elLangFilter === 'hindi') {
-      matchLang = lang.includes('hi') || accent.includes('hindi') ||
-                  name.includes('hindi') || name.includes('hinglish');
-    } else if (elLangFilter === 'indian') {
-      matchLang = accent === 'indian' || lang.includes('hi') ||
-                  name.includes('indian');
-    } else {
-      matchLang = accent.includes(elLangFilter) ||
-                  lang.includes(elLangFilter) ||
-                  name.includes(elLangFilter);
-    }
+    const matchLang =
+      elLangFilter === 'all' ? true :
+        v.labels?.accent?.toLowerCase().includes(elLangFilter) ||
+        v.labels?.language?.toLowerCase().includes(elLangFilter) ||
+        v.name?.toLowerCase().includes(elLangFilter);
     return matchSearch && matchLang;
-  });
-
-  // Sort: Indian accent first, then by name
-  const sortedELVoices = [...filteredELVoices].sort((a, b) => {
-    const aIndian = a.labels?.accent?.toLowerCase() === 'indian' ? 0 : 1;
-    const bIndian = b.labels?.accent?.toLowerCase() === 'indian' ? 0 : 1;
-    if (aIndian !== bIndian) return aIndian - bIndian;
-    return (a.name || '').localeCompare(b.name || '');
   });
 
   if (!avatar) return null;
@@ -791,6 +764,9 @@ export default function CreatePage() {
                     <SelectContent>
                       <SelectItem value="English">English</SelectItem>
                       <SelectItem value="Hindi">Hindi</SelectItem>
+                      <SelectItem value="Gujarati">Gujarati</SelectItem>
+                      <SelectItem value="Tamil">Tamil</SelectItem>
+                      <SelectItem value="Telugu">Telugu</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -822,6 +798,23 @@ export default function CreatePage() {
               </div>
 
               <div style={divider} />
+
+              {/* Format Toggle */}
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 8, fontWeight: 500 }}>FORMAT</p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {[{ label: '16:9 Landscape', value: '16:9' }, { label: '9:16 Portrait', value: '9:16' }].map(opt => (
+                    <button key={opt.value} onClick={() => setAspectRatio(opt.value)}
+                      style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid',
+                        borderColor: aspectRatio === opt.value ? '#e0a039' : 'rgba(255,255,255,0.12)',
+                        background: aspectRatio === opt.value ? 'rgba(224,160,57,0.15)' : 'rgba(255,255,255,0.04)',
+                        color: aspectRatio === opt.value ? '#e0a039' : 'rgba(255,255,255,0.45)',
+                        fontSize: 12, fontWeight: aspectRatio === opt.value ? 600 : 400, cursor: 'pointer' }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Generate Video */}
               <button
@@ -1017,7 +1010,7 @@ export default function CreatePage() {
                       <div>
                         <label style={lbl}>Filter by Language</label>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5 }}>
-                          {['all', 'hindi', 'english', 'indian'].map(l => (
+                          {['all', 'hindi', 'indian', 'tamil', 'telugu', 'english'].map(l => (
                             <button
                               key={l}
                               className={`cp-filter-btn ${elLangFilter === l ? 'active' : ''}`}
