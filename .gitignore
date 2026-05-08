@@ -217,3 +217,15 @@ credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/0.pack
+
+# Backup files from in-place patches
+backend/server.py.bak-*
+backend/server.py.before-*
+backend/*.bak
+backend/__pycache__/
+backend/*.pyc
+
+# Sensitive credentials — never commit
+backend/heygen_oauth.json
+backend/.env
+.env
